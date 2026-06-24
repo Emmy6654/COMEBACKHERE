@@ -13,6 +13,9 @@ Hooks run on each commit and enforce:
 
 - ABI snapshot hygiene (`abis/*.json` must change together with `COMEBACKHERE-contracts/contracts/*/src/`)
 - Markdown linting
+- Trailing whitespace detection
+- End-of-file fixing (ensure files end with a newline)
+- JSON validation
 
 Run all hooks manually:
 
