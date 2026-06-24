@@ -1,12 +1,13 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import DashboardLayout from "./components/Dashboard/DashboardLayout";
+import SettlementProposalForm from "./components/SettlementProposal/SettlementProposalForm";
 
 function InvoicesPage() {
   return <p>Invoices list will appear here.</p>;
 }
 
 function SettlementsPage() {
-  return <p>Settlements will appear here.</p>;
+  return <SettlementProposalForm />;
 }
 
 function DisputesPage() {
