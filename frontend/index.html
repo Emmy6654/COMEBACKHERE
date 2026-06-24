@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>COMEBACKHERE — Wallet</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <h1>COMEBACKHERE</h1>
+      <p class="subtitle">The Stripe for Stellar</p>
+      <button id="connectWalletBtn" class="btn btn-primary">Connect Wallet</button>
+    </header>
+    <main id="appContent" class="app-content hidden">
+      <div class="status-card">
+        <h2>Connected</h2>
+        <p id="accountAddress" class="account-address"></p>
+        <button id="disconnectBtn" class="btn btn-secondary">Disconnect</button>
+      </div>
+    </main>
+  </div>
+
+  <div id="walletModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Connect Wallet</h2>
+        <button id="closeModalBtn" class="btn-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-description">Choose a Stellar wallet to connect.</p>
+        <div class="wallet-list" id="walletList">
+          <button class="wallet-option" data-wallet="freighter">
+            <span class="wallet-icon freighter-icon"></span>
+            <span class="wallet-info">
+              <span class="wallet-name">Freighter</span>
+              <span class="wallet-desc">Stellar wallet extension</span>
+            </span>
+          </button>
+          <button class="wallet-option" data-wallet="albedo">
+            <span class="wallet-icon albedo-icon"></span>
+            <span class="wallet-info">
+              <span class="wallet-name">Albedo</span>
+              <span class="wallet-desc">Stellar wallet (web / extension)</span>
+            </span>
+          </button>
+        </div>
+        <div id="connectionError" class="error-message hidden">
+          <p id="errorText"></p>
+          <a id="installLink" href="#" target="_blank" rel="noopener noreferrer" class="install-link hidden">Install Extension</a>
+        </div>
+        <div id="connectionLoading" class="loading-indicator hidden">
+          <div class="spinner"></div>
+          <p>Connecting...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="wallet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
