@@ -384,7 +384,7 @@ mod tests {
     fn setup() -> (Env, soroban_sdk::Address) {
         let e = Env::default();
         e.mock_all_auths();
-        let contract_id = e.register_contract(None, TreasuryContract);
+        let contract_id = e.register(TreasuryContract, ());
         (e, contract_id)
     }
 

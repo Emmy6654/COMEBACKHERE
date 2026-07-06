@@ -401,7 +401,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let contract_id = env.register_contract(None, InvoiceContract);
+        let contract_id = env.register(InvoiceContract, ());
         InvoiceContractClient::new(&env, &contract_id).initialize(&admin);
         env.ledger().with_mut(|li| li.timestamp = ts);
         (env, contract_id, admin)
@@ -469,7 +469,7 @@ mod tests {
         let token = Address::generate(&env);
         env.ledger().set_timestamp(1000);
 
-        let contract_id = env.register_contract(None, InvoiceContract);
+        let contract_id = env.register(InvoiceContract, ());
         let client = InvoiceContractClient::new(&env, &contract_id);
         client.initialize(&admin);
 
@@ -489,7 +489,7 @@ mod tests {
         let token = Address::generate(&env);
         env.ledger().set_timestamp(1000);
 
-        let contract_id = env.register_contract(None, InvoiceContract);
+        let contract_id = env.register(InvoiceContract, ());
         let client = InvoiceContractClient::new(&env, &contract_id);
         client.initialize(&admin);
 
@@ -509,7 +509,7 @@ mod tests {
         let admin = Address::generate(&env);
         let non_admin = Address::generate(&env);
 
-        let contract_id = env.register_contract(None, InvoiceContract);
+        let contract_id = env.register(InvoiceContract, ());
         let client = InvoiceContractClient::new(&env, &contract_id);
         client.initialize(&admin);
 
@@ -524,7 +524,7 @@ mod tests {
         let admin = Address::generate(&env);
         let non_admin = Address::generate(&env);
 
-        let contract_id = env.register_contract(None, InvoiceContract);
+        let contract_id = env.register(InvoiceContract, ());
         let client = InvoiceContractClient::new(&env, &contract_id);
         client.initialize(&admin);
 
@@ -582,8 +582,8 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let invoice_cid = env.register_contract(None, InvoiceContract);
-        let treasury_cid = env.register_contract(None, TreasuryStub);
+        let invoice_cid = env.register(InvoiceContract, ());
+        let treasury_cid = env.register(TreasuryStub, ());
         let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
         invoice_client.initialize(&admin);
         invoice_client.set_treasury(&admin, &treasury_cid);
@@ -640,7 +640,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::generate(&env);
-        let invoice_cid = env.register_contract(None, InvoiceContract);
+        let invoice_cid = env.register(InvoiceContract, ());
         let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
         invoice_client.initialize(&admin);
         env.ledger().with_mut(|li| li.timestamp = 1000);

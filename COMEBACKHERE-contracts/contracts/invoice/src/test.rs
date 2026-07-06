@@ -9,7 +9,7 @@ fn setup_test() -> (Env, Address, Address, InvoiceContractClient) {
     let admin = Address::generate(&env);
     let merchant = Address::generate(&env);
 
-    let contract_id = env.register_contract(None, InvoiceContract);
+    let contract_id = env.register(InvoiceContract, ());
     let client = InvoiceContractClient::new(&env, &contract_id);
 
     client.initialize(&admin);

@@ -166,7 +166,7 @@ mod tests {
     fn setup() -> (Env, Address) {
         let e = Env::default();
         e.mock_all_auths();
-        let id = e.register_contract(None, SettlementContract);
+        let id = e.register(SettlementContract, ());
         (e, id)
     }
 

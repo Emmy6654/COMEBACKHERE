@@ -220,7 +220,7 @@ mod tests {
     fn setup() -> (Env, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, InvoiceContract);
+        let contract_id = env.register(InvoiceContract, ());
         let admin = Address::generate(&env);
         InvoiceContractClient::new(&env, &contract_id).initialize(&admin);
         env.ledger().set_timestamp(1000);
