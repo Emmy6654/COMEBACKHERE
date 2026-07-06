@@ -20,8 +20,13 @@ interface FreighterApi {
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 }
 
+interface SorobanRpcApi {
+  assembleTransaction: (tx: unknown, sim: unknown) => { build: () => { toXDR: () => string } }
+}
+
 interface WindowWithFreighter extends Window {
   freighterApi?: FreighterApi
+  SorobanRpc?: SorobanRpcApi
 }
 
 export function getNetworkPassphrase(): string {
@@ -99,6 +104,28 @@ export async function payInvoice(contractId: string, invoiceId: number, publicKe
   }
 }
 
+export async function cancelInvoice(contractId: string, invoiceId: number, publicKey: string): Promise<PaymentResult> {
+  const server = getServer()
+  const freighter = (window as WindowWithFreighter).freighterApi
+  if (!freighter) return { success: false, error: "Freighter wallet not detected" }
+  try {
+    const tx = new TransactionBuilder(await server.getAccount(publicKey), {
+      fee: BASE_FEE, networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(
+        new Contract(contractId).call(
+          "cancel_invoice",
+          nativeToScVal(publicKey, { type: "address" }),
+          nativeToScVal(invoiceId, { type: "u64" })
+        )
+      )
+      .setTimeout(30).build() as Transaction
+    return { success: true, transaction_hash: await buildAndSend(server, tx, freighter) }
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : "Cancel failed" }
+  }
+}
+
 export async function requestRefund(contractId: string, invoiceId: number, publicKey: string): Promise<PaymentResult> {
   const server = getServer()
   const freighter = (window as WindowWithFreighter).freighterApi
@@ -138,20 +165,25 @@ export async function batchExpireInvoices(
       .build()
 
     const simulated = await server.simulateTransaction(tx)
-    const { SorobanRpc } = window as any
+    const sorobanRpc = (window as WindowWithFreighter).SorobanRpc
+    if (!sorobanRpc) throw new Error("SorobanRpc not available on window")
+    const freighter = (window as WindowWithFreighter).freighterApi
+    if (!freighter) throw new Error("Freighter wallet not detected")
 
-    const prepare = SorobanRpc.assembleTransaction(tx, simulated)
-    const signed = await (window as any).freighterApi.signTransaction(
-      prepare.toXDR(),
+    const prepare = sorobanRpc.assembleTransaction(tx, simulated)
+    const signed = await freighter.signTransaction(
+      prepare.build().toXDR(),
       { networkPassphrase: getNetworkPassphrase() }
     )
 
-    const txHash = await server.sendTransaction(signed)
+    const txHash = await server.sendTransaction(
+      TransactionBuilder.fromXDR(signed, getNetworkPassphrase()) as Transaction
+    )
     return { success: true, transaction_hash: txHash.hash }
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       success: false,
-      error: err?.message ?? err?.toString() ?? "Batch expire failed",
+      error: err instanceof Error ? err.message : String(err) || "Batch expire failed",
     }
   }
 }
@@ -180,20 +212,25 @@ export async function releaseEscrow(
       .build()
 
     const simulated = await server.simulateTransaction(tx)
-    const { SorobanRpc } = window as any
+    const sorobanRpc = (window as WindowWithFreighter).SorobanRpc
+    if (!sorobanRpc) throw new Error("SorobanRpc not available on window")
+    const freighter = (window as WindowWithFreighter).freighterApi
+    if (!freighter) throw new Error("Freighter wallet not detected")
 
-    const prepare = SorobanRpc.assembleTransaction(tx, simulated)
-    const signed = await (window as any).freighterApi.signTransaction(
-      prepare.toXDR(),
+    const prepare = sorobanRpc.assembleTransaction(tx, simulated)
+    const signed = await freighter.signTransaction(
+      prepare.build().toXDR(),
       { networkPassphrase: getNetworkPassphrase() }
     )
 
-    const txHash = await server.sendTransaction(signed)
+    const txHash = await server.sendTransaction(
+      TransactionBuilder.fromXDR(signed, getNetworkPassphrase()) as Transaction
+    )
     return { success: true, transaction_hash: txHash.hash }
-  } catch (err: any) {
+  } catch (err: unknown) {
     return {
       success: false,
-      error: err?.message ?? err?.toString() ?? "Release escrow failed",
+      error: err instanceof Error ? err.message : String(err) || "Release escrow failed",
     }
   }
 }

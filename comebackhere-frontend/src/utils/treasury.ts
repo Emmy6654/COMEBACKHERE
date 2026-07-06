@@ -12,17 +12,39 @@ const TREASURY_CONTRACT_ID =
 const SOROBAN_RPC = import.meta.env.VITE_SOROBAN_RPC as string
 const NETWORK_PASSPHRASE = import.meta.env.VITE_NETWORK_PASSPHRASE as string
 
+interface FreighterApi {
+  getAddress: () => Promise<{ address: string }>
+  signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
+}
+
+interface SorobanRpcApi {
+  Server: new (url: string) => {
+    getAccount: (address: string) => Promise<unknown>
+    simulateTransaction: (tx: unknown) => Promise<unknown>
+    sendTransaction: (tx: unknown) => Promise<{ hash: string }>
+  }
+  assembleTransaction: (tx: unknown, sim: unknown) => { toXDR: () => string }
+}
+
+interface WindowWithWallet extends Window {
+  freighterApi?: FreighterApi
+  SorobanRpc?: SorobanRpcApi
+}
+
 function getNetworkPassphrase(): string {
   return NETWORK_PASSPHRASE || Networks.STANDALONE
 }
 
 function getServer() {
-  const { SorobanRpc } = window as any
-  return new SorobanRpc.Server(SOROBAN_RPC)
+  const sorobanRpc = (window as WindowWithWallet).SorobanRpc
+  if (!sorobanRpc) throw new Error("SorobanRpc not available on window")
+  return new sorobanRpc.Server(SOROBAN_RPC)
 }
 
 async function getPublicKey(): Promise<string> {
-  const { address } = await (window as any).freighterApi.getAddress()
+  const freighter = (window as WindowWithWallet).freighterApi
+  if (!freighter) throw new Error("Freighter wallet not detected")
+  const { address } = await freighter.getAddress()
   return address
 }
 
@@ -34,14 +56,15 @@ export async function getAllowedTokens(): Promise<string[]> {
   const contract = new Contract(TREASURY_CONTRACT_ID)
 
   const result = await server.simulateTransaction(
-    new TransactionBuilder(await server.getAccount(TREASURY_CONTRACT_ID), {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    new TransactionBuilder(await server.getAccount(TREASURY_CONTRACT_ID) as any, {
       fee: BASE_FEE,
       networkPassphrase: getNetworkPassphrase(),
     })
       .addOperation(contract.call("get_allowed_tokens"))
       .setTimeout(30)
       .build()
-  )
+  ) as { result?: { retval?: xdr.ScVal } }
 
   if (!result.result?.retval) return []
 
@@ -63,9 +86,15 @@ async function submitTokenOp(
     const server = getServer()
     const contract = new Contract(TREASURY_CONTRACT_ID)
     const publicKey = await getPublicKey()
+    const freighter = (window as WindowWithWallet).freighterApi
+    if (!freighter) throw new Error("Freighter wallet not detected")
+    const sorobanRpc = (window as WindowWithWallet).SorobanRpc
+    if (!sorobanRpc) throw new Error("SorobanRpc not available on window")
+
     const args = [nativeToScVal(tokenAddress, { type: "address" })]
 
-    const tx = new TransactionBuilder(await server.getAccount(publicKey), {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tx = new TransactionBuilder(await server.getAccount(publicKey) as any, {
       fee: BASE_FEE,
       networkPassphrase: getNetworkPassphrase(),
     })
@@ -74,17 +103,16 @@ async function submitTokenOp(
       .build()
 
     const simulated = await server.simulateTransaction(tx)
-    const { SorobanRpc } = window as any
-    const prepare = SorobanRpc.assembleTransaction(tx, simulated)
-    const signed = await (window as any).freighterApi.signTransaction(
+    const prepare = sorobanRpc.assembleTransaction(tx, simulated)
+    const signed = await freighter.signTransaction(
       prepare.toXDR(),
       { networkPassphrase: getNetworkPassphrase() }
     )
 
     const txHash = await server.sendTransaction(signed)
     return { success: true, hash: txHash.hash }
-  } catch (err: any) {
-    return { success: false, error: err?.message ?? "Transaction failed" }
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : "Transaction failed" }
   }
 }
 

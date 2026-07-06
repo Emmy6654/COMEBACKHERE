@@ -1,20 +1,3 @@
-const EC_LEVEL_M = 0
-
-function getAlphanumericValue(ch: string): number {
-  const code = ch.charCodeAt(0)
-  if (code >= 48 && code <= 57) return code - 48
-  if (code >= 65 && code <= 90) return code - 55
-  const special = ' $%*+-./:'.indexOf(ch)
-  if (special >= 0) return 36 + special
-  return -1
-}
-
-function getMode(data: string): 'numeric' | 'alphanumeric' | 'byte' {
-  if (/^\d+$/.test(data)) return 'numeric'
-  if (/^[0-9A-Z $%*+\-./:]+$/.test(data)) return 'alphanumeric'
-  return 'byte'
-}
-
 function getVersion(data: string): number {
   const len = new TextEncoder().encode(data).length
   const capacities = [

@@ -32,8 +32,8 @@ export function TokenAllowlist() {
       const list = await getAllowedTokens()
       setTokens(list)
       setLoaded(true)
-    } catch (err: any) {
-      setLoadError(err?.message ?? "Failed to load tokens")
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : "Failed to load tokens")
     } finally {
       setLoading(false)
     }
@@ -53,8 +53,8 @@ export function TokenAllowlist() {
       setAddSuccess(`Token added. tx: ${result.hash}`)
       setNewToken("")
       await loadTokens()
-    } catch (err: any) {
-      setAddError(err?.message ?? "Add failed")
+    } catch (err: unknown) {
+      setAddError(err instanceof Error ? err.message : "Add failed")
     } finally {
       setAdding(false)
     }
@@ -69,8 +69,8 @@ export function TokenAllowlist() {
       if (!result.success) throw new Error(result.error ?? "Remove failed")
       setConfirm(null)
       await loadTokens()
-    } catch (err: any) {
-      setRemoveError(err?.message ?? "Remove failed")
+    } catch (err: unknown) {
+      setRemoveError(err instanceof Error ? err.message : "Remove failed")
     } finally {
       setRemoving(false)
     }

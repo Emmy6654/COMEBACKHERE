@@ -2,16 +2,6 @@
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec};
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum SettlementError {
-    NotFound = 1,
-    NotPending = 2,
-    InsufficientApprovals = 3,
-    Unauthorized = 4,
-}
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SettlementStatus {

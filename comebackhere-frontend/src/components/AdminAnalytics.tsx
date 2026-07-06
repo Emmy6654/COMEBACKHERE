@@ -57,7 +57,7 @@ export function AdminAnalytics() {
 
   const data = useMemo(() => {
     return MOCK_DATA
-  }, [startDate, endDate])
+  }, [])
 
   const totalInvoices =
     data.invoices.pending +
