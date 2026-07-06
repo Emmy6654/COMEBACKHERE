@@ -11,7 +11,7 @@ This document maps every `InvoiceError` variant (and other contract error codes)
 Defined in `contracts/invoice/src/lib.rs` and `COMEBACKHERE-contracts/contracts/invoice/src/lib.rs`.
 
 | Code | Name | Trigger condition | Remediation |
-|------|------|-------------------|-------------|
+| ------ | ------ | ------------------- | ------------- |
 | 1 | `Unauthorized` | Caller is not the merchant, admin, or payer for the operation. | Ensure the signing key matches the expected role. Merchants must sign `create_invoice`; the admin must sign `mark_paid` / `release_escrow`; the payer must sign `request_refund`. |
 | 2 | `ContractPaused` | A state-changing call was made while the contract is in a paused state. | Check contract status before submitting. Contact the admin to unpause the contract. Do not retry until the contract is unpaused. |
 | 3 | `InvalidAmount` | `amount_usdc` ≤ 0, or `gross_usdc` < `amount_usdc`. | Verify that both amounts are positive and that `gross_usdc ≥ amount_usdc`. Amounts are denominated in USDC stroops (1 USDC = 10 000 000 stroops). |
@@ -32,7 +32,7 @@ Defined in `contracts/invoice/src/lib.rs` and `COMEBACKHERE-contracts/contracts/
 Defined in `contracts/settlement/src/lib.rs`.
 
 | Code | Name | Trigger condition | Remediation |
-|------|------|-------------------|-------------|
+| ------ | ------ | ------------------- | ------------- |
 | 1 | `NotFound` | No settlement exists for the supplied ID. | Confirm the settlement ID returned by `propose`. |
 | 2 | `Unauthorized` | Caller has no registered weight in the treasury signer set. | Use a key that was registered via `initialize` or a subsequent signer-rotation call. |
 | 3 | `AlreadyApproved` | The same signer attempted to approve the same settlement twice. | Each signer may approve a settlement only once. |
@@ -58,7 +58,7 @@ Backend endpoints return errors as JSON:
 ## Quick-reference: HTTP status mapping
 
 | HTTP status | Typical contract code(s) | Meaning |
-|-------------|--------------------------|---------|
+| ------------- | -------------------------- | --------- |
 | 400 | — | Invalid request body (validation failed before hitting the contract). |
 | 403 | 1 (`Unauthorized`) | Caller is not authorised for the operation. |
 | 404 | 6 (`NotFound`), Settlement 1 | Resource does not exist. |

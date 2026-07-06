@@ -27,7 +27,7 @@ Placeholder values used throughout:
 
 ### Create an invoice
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -44,7 +44,7 @@ soroban contract invoke \
   --nonce 1
 ```
 
-**API**
+#### API
 
 ```sh
 curl -X POST http://localhost:3000/invoices \
@@ -63,7 +63,7 @@ Response includes `invoice_id` to use in subsequent calls.
 
 ### Get invoice status
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -75,7 +75,7 @@ soroban contract invoke \
   --invoice_id 1
 ```
 
-**API**
+#### API
 
 ```sh
 curl http://localhost:3000/invoices/1
@@ -85,7 +85,7 @@ curl http://localhost:3000/invoices/1
 
 ### Mark invoice as paid
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -105,7 +105,7 @@ Calling `raise_dispute` on the invoice contract atomically calls
 `raise_dispute` on the treasury contract, placing the referenced
 settlement `OnHold`.
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -120,7 +120,7 @@ soroban contract invoke \
   --reason 1
 ```
 
-**API**
+#### API
 
 ```sh
 curl -X POST http://localhost:3000/disputes \
@@ -153,7 +153,7 @@ soroban contract invoke \
 
 ### Propose a settlement
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -174,7 +174,7 @@ Returns the `settlement_id`.
 
 ### Approve a settlement
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -187,7 +187,7 @@ soroban contract invoke \
   --settlement_id 1
 ```
 
-**API**
+#### API
 
 ```sh
 curl -X POST http://localhost:3000/api/treasury/approve-settlement \
@@ -199,7 +199,7 @@ curl -X POST http://localhost:3000/api/treasury/approve-settlement \
 
 ### Execute a settlement
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -213,7 +213,7 @@ soroban contract invoke \
   --token_contract CUSDC...
 ```
 
-**API**
+#### API
 
 The execute endpoint validates the treasury USDC balance before submitting.
 
@@ -227,7 +227,7 @@ curl -X POST http://localhost:3000/api/treasury/execute-settlement \
 
 ### Get / set approval threshold
 
-**soroban-cli — read**
+#### soroban-cli — read
 
 ```sh
 soroban contract invoke \
@@ -238,7 +238,7 @@ soroban contract invoke \
   -- get_threshold
 ```
 
-**soroban-cli — update**
+#### soroban-cli — update
 
 ```sh
 soroban contract invoke \
@@ -251,13 +251,13 @@ soroban contract invoke \
   --new_threshold 3
 ```
 
-**API — read**
+#### API — read
 
 ```sh
 curl http://localhost:3000/api/treasury/threshold
 ```
 
-**API — update**
+#### API — update
 
 ```sh
 curl -X POST http://localhost:3000/api/treasury/threshold \
@@ -271,7 +271,7 @@ curl -X POST http://localhost:3000/api/treasury/threshold \
 
 ### Allow an address
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -288,7 +288,7 @@ soroban contract invoke \
 
 ### Block an address
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -307,7 +307,7 @@ soroban contract invoke \
 
 ### Read
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -318,7 +318,7 @@ soroban contract invoke \
   -- get_grace_window
 ```
 
-**API**
+#### API
 
 ```sh
 curl http://localhost:3000/api/invoice/grace-window
@@ -326,7 +326,7 @@ curl http://localhost:3000/api/invoice/grace-window
 
 ### Update (admin only)
 
-**soroban-cli**
+#### soroban-cli
 
 ```sh
 soroban contract invoke \
@@ -339,7 +339,7 @@ soroban contract invoke \
   --window 172800
 ```
 
-**API**
+#### API
 
 ```sh
 curl -X POST http://localhost:3000/api/invoice/grace-window \

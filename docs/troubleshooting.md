@@ -23,7 +23,7 @@ docker compose logs soroban
 **Common causes and fixes:**
 
 | Symptom | Cause | Fix |
-|---|---|---|
+| --- | --- | --- |
 | `connection refused` on `localhost:8000` | Container not started | Run `docker compose up -d` or `make dev` |
 | Container starts then immediately exits | Corrupted volume data | `docker compose down -v && docker compose up -d` |
 | `health: starting` stays for more than 60 seconds | Slow initial ledger catch-up | Wait up to 90 seconds; the healthcheck has a 30-second `start_period` and retries every 5 seconds |

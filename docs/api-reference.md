@@ -27,7 +27,7 @@ Returns service health status.
 
 Fetch the on-chain status of an invoice by its numeric ID.
 
-**Path parameters**
+#### Path parameters
 
 | Parameter | Type   | Description             |
 | --------- | ------ | ----------------------- |
@@ -42,7 +42,7 @@ Fetch the on-chain status of an invoice by its numeric ID.
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                              |
 | ------ | ---------------------------------------- |
@@ -57,7 +57,7 @@ Fetch the on-chain status of an invoice by its numeric ID.
 
 Create a new invoice by submitting `create_invoice` to the Soroban RPC.
 
-**Request body**
+#### Request body
 
 ```json
 {
@@ -84,7 +84,7 @@ Create a new invoice by submitting `create_invoice` to the Soroban RPC.
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                                                    |
 | ------ | -------------------------------------------------------------- |
@@ -102,7 +102,7 @@ Create a new invoice by submitting `create_invoice` to the Soroban RPC.
 
 Raise a dispute linked to a settlement, transitioning it to `OnHold`.
 
-**Request body**
+#### Request body
 
 ```json
 {
@@ -130,7 +130,7 @@ Raise a dispute linked to a settlement, transitioning it to `OnHold`.
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                                                    |
 | ------ | -------------------------------------------------------------- |
@@ -162,7 +162,7 @@ Returns all settlements with `Pending` status from the indexed database.
 ]
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description             |
 | ------ | ----------------------- |
@@ -174,7 +174,7 @@ Returns all settlements with `Pending` status from the indexed database.
 
 Approve a pending settlement by submitting `approve_settlement` to the treasury contract.
 
-**Request body**
+#### Request body
 
 ```json
 { "settlement_id": 1 }
@@ -199,7 +199,7 @@ Approve a pending settlement by submitting `approve_settlement` to the treasury 
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                                     |
 | ------ | ----------------------------------------------- |
@@ -213,7 +213,7 @@ Approve a pending settlement by submitting `approve_settlement` to the treasury 
 
 Execute a fully-approved settlement after verifying the treasury USDC balance.
 
-**Request body**
+#### Request body
 
 ```json
 {
@@ -238,7 +238,7 @@ Execute a fully-approved settlement after verifying the treasury USDC balance.
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                                        |
 | ------ | -------------------------------------------------- |
@@ -260,7 +260,7 @@ Returns the current approval threshold from the treasury contract.
 { "threshold": 2 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                             |
 | ------ | --------------------------------------- |
@@ -274,7 +274,7 @@ Returns the current approval threshold from the treasury contract.
 
 Update the treasury approval threshold.
 
-**Request body**
+#### Request body
 
 ```json
 { "threshold": 3 }
@@ -293,7 +293,7 @@ Update the treasury approval threshold.
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                                     |
 | ------ | ----------------------------------------------- |
@@ -316,7 +316,7 @@ Returns the current invoice grace window in seconds.
 { "grace_window_seconds": 86400 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                             |
 | ------ | --------------------------------------- |
@@ -330,7 +330,7 @@ Returns the current invoice grace window in seconds.
 
 Update the invoice grace window.
 
-**Request body**
+#### Request body
 
 ```json
 { "grace_window_seconds": 172800 }
@@ -349,7 +349,7 @@ Update the invoice grace window.
 }
 ```
 
-**Errors**
+#### Errors
 
 | Status | Description                                     |
 | ------ | ----------------------------------------------- |
