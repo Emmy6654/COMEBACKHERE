@@ -3,7 +3,8 @@ import { InvoicePayment } from "./components/InvoicePayment"
 import { RefundRequest } from "./components/RefundRequest"
 import { ComplianceManager } from "./components/ComplianceManager"
 import { TokenAllowlist } from "./components/TokenAllowlist"
-import { WalletBar } from "./components/WalletBar"
+import { BatchExpireInvoices } from "./components/BatchExpireInvoices"
+import { TreasuryManager } from "./components/TreasuryManager"
 import { useInvoice } from "./hooks/useInvoice"
 import { useTheme } from "./hooks/useTheme"
 import { useWallet } from "./hooks/useWallet"
@@ -11,9 +12,7 @@ import { CopyableText } from "./components/CopyableText"
 import "./App.css"
 import "./components/ErrorBoundary.css"
 
-const EXPECTED_NETWORK = import.meta.env.VITE_NETWORK_PASSPHRASE as string ?? "Standalone Network ; February 2025"
-
-type Tab = "payment" | "refund" | "compliance" | "tokens"
+type Tab = "payment" | "refund" | "compliance" | "tokens" | "batch-expire" | "treasury"
 
 function RefundTab() {
   const { invoice, loading, error, loadInvoice, refund } = useInvoice()
@@ -147,10 +146,34 @@ export default function App() {
           Compliance
         </button>
         <button
+          role="tab"
+          aria-selected={tab === "tokens"}
+          aria-controls="tabpanel-tokens"
+          id="tab-tokens"
           className={`tab ${tab === "tokens" ? "tab--active" : ""}`}
           onClick={() => setTab("tokens")}
         >
           Token Allowlist
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "batch-expire"}
+          aria-controls="tabpanel-batch-expire"
+          id="tab-batch-expire"
+          className={`tab ${tab === "batch-expire" ? "tab--active" : ""}`}
+          onClick={() => setTab("batch-expire")}
+        >
+          Batch Expire
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "treasury"}
+          aria-controls="tabpanel-treasury"
+          id="tab-treasury"
+          className={`tab ${tab === "treasury" ? "tab--active" : ""}`}
+          onClick={() => setTab("treasury")}
+        >
+          Treasury
         </button>
       </nav>
 
@@ -161,15 +184,13 @@ export default function App() {
           <RefundTab />
         ) : tab === "tokens" ? (
           <TokenAllowlist />
-        ) : (
+        ) : tab === "compliance" ? (
           <ComplianceManager />
         ) : tab === "batch-expire" ? (
           <BatchExpireInvoices walletAddress={address} />
         ) : tab === "treasury" ? (
           <TreasuryManager />
-        ) : (
-          <EscrowRelease />
-        )}
+        ) : null}
       </main>
     </div>
   )

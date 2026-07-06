@@ -35,7 +35,7 @@ export USDC_CONTRACT_ID=<deployed USDC token contract>
 ## Test Coverage
 
 | Test | Description |
-|---|---|
+| --- | --- |
 | Create invoice | Creates a valid invoice with minimum amount |
 | Pay invoice | Pays the invoice with USDC via the payer account |
 | Escrow release | Proposes, approves, and executes a treasury settlement |

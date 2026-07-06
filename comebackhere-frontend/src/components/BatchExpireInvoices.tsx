@@ -118,10 +118,10 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
             msg: `Invoice #${id} was not expired (status: ${updated.status})`,
           })
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         errorList.push({
           id: String(id),
-          msg: `Invoice #${id}: ${err?.message ?? "failed to verify"}`,
+          msg: `Invoice #${id}: ${err instanceof Error ? err.message : "failed to verify"}`,
         })
       }
       done++

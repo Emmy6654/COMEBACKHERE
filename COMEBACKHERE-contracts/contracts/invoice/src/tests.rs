@@ -8,7 +8,7 @@ fn test_create_invoice_expiry_overflow() {
     let admin = Address::generate(&e);
     let merchant = Address::generate(&e);
 
-    let contract_id = e.register_contract(None, InvoiceContract);
+    let contract_id = e.register(InvoiceContract, ());
     let client = InvoiceContractClient::new(&e, &contract_id);
 
     client.initialize(&admin);
@@ -44,7 +44,7 @@ fn test_create_invoice_success() {
         base_reserve: 10,
     });
 
-    let contract_id = e.register_contract(None, InvoiceContract);
+    let contract_id = e.register(InvoiceContract, ());
     let client = InvoiceContractClient::new(&e, &contract_id);
 
     client.initialize(&admin);

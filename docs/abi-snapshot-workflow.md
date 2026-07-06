@@ -68,7 +68,7 @@ git commit -m "chore: update ABI snapshots"
 The `comebackhere-backend` service reads `abis/*.json` at startup to build its Soroban contract clients. Stale snapshots cause:
 
 | Scenario | Downstream impact |
-|---|---|
+| --- | --- |
 | New function added to contract but missing from snapshot | Backend cannot call the new function; API endpoints that depend on it return errors |
 | Function signature changed but snapshot not updated | Backend sends malformed transactions; Soroban RPC rejects them with simulation failures |
 | Function removed from contract but still in snapshot | Backend attempts calls to a non-existent function; transactions fail at the ledger level |

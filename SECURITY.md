@@ -5,7 +5,7 @@
 If you discover a security vulnerability in the COMEBACKHERE Protocol, please
 report it responsibly. **Do not open a public issue.**
 
-Send an email to **security@comebackhere.io** with the following details:
+Send an email to **<security@comebackhere.io>** with the following details:
 
 - A description of the vulnerability and its potential impact.
 - Step-by-step instructions to reproduce the issue.
@@ -20,7 +20,7 @@ You may encrypt your report using our PGP key, available at
 The following components are in scope for responsible disclosure:
 
 | Component | Repository / Location |
-|---|---|
+| --- | --- |
 | Soroban smart contracts | `COMEBACKHERE-contracts/` and `contracts/` |
 | Backend API | `comebackhere-backend` (separate repo) |
 | Frontend application | `frontend/` and `comebackhere-frontend/` |
@@ -38,7 +38,7 @@ The following components are in scope for responsible disclosure:
 ## Response SLA
 
 | Stage | Timeline |
-|---|---|
+| --- | --- |
 | Acknowledgement of report | Within **48 hours** |
 | Initial triage and severity assessment | Within **5 business days** |
 | Patch development and internal review | Within **30 days** for critical/high severity |
@@ -63,7 +63,7 @@ We follow a four-tier severity model:
 We offer bounty rewards for verified vulnerabilities based on severity:
 
 | Severity | Reward Range |
-|---|---|
+| --- | --- |
 | Critical | $5,000 – $25,000 |
 | High | $2,000 – $5,000 |
 | Medium | $500 – $2,000 |
@@ -95,12 +95,12 @@ authorized. We will not pursue legal action against researchers who:
 
 ## Contact
 
-- **Email:** security@comebackhere.io
+- **Email:** <security@comebackhere.io>
 - **PGP Key:** `https://comebackhere.io/.well-known/pgp-key.txt`
 
 ## Supported Versions
 
 | Version | Supported |
-|---|---|
+| --- | --- |
 | Latest on `main` | Yes |
 | Previous releases | Best-effort, critical fixes only |

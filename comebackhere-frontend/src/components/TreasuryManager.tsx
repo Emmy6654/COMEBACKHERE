@@ -41,11 +41,11 @@ async function callTreasuryAction(
   walletAddress: string
 ): Promise<{ success: boolean; hash?: string; error?: string }> {
   try {
-    const { SorobanRpc, Contract, TransactionBuilder, BASE_FEE, nativeToScVal, Networks, Address } =
+    const { Contract, TransactionBuilder, assembleTransaction, BASE_FEE, nativeToScVal, Networks, Address, Server } =
       await import("soroban-client")
     const rpc = import.meta.env.VITE_SOROBAN_RPC as string
     const passphrase = (import.meta.env.VITE_NETWORK_PASSPHRASE as string) ?? Networks.STANDALONE
-    const server = new SorobanRpc.Server(rpc)
+    const server = new Server(rpc)
     const contract = new Contract(TREASURY_CONTRACT)
     const account = await server.getAccount(walletAddress)
 
@@ -64,7 +64,8 @@ async function callTreasuryAction(
             nativeToScVal(stroops, { type: "i128" }),
           ]
 
-    const tx = new TransactionBuilder(account as Parameters<typeof TransactionBuilder>[0], {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tx = new TransactionBuilder(account as any, {
       fee: BASE_FEE,
       networkPassphrase: passphrase,
     })
@@ -73,13 +74,14 @@ async function callTreasuryAction(
       .build()
 
     const simulated = await server.simulateTransaction(tx)
-    const prepare = SorobanRpc.assembleTransaction(tx, simulated)
+    const prepare = assembleTransaction(tx, passphrase, simulated)
     const w = window as unknown as WindowWithFreighter
-    const signed = await w.freighterApi?.signTransaction(prepare.toXDR(), {
+    const signed = await w.freighterApi?.signTransaction(prepare.build().toXDR(), {
       networkPassphrase: passphrase,
     })
     if (!signed) throw new Error("Wallet not connected or signing was rejected")
-    const result = await server.sendTransaction(signed)
+    const signedTx = TransactionBuilder.fromXDR(signed, passphrase)
+    const result = await server.sendTransaction(signedTx)
     return { success: true, hash: result.hash }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)

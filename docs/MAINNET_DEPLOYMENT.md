@@ -55,7 +55,7 @@ upgrade, or modify mainnet contracts.
 ### Signer Roles
 
 | Role | Count | Responsibility |
-|------|-------|----------------|
+| ------ | ------- | ---------------- |
 | **Lead Deployer** | 1 | Prepares the deployment issue, builds release artifacts, submits the deployment transaction after all approvals are collected. Does NOT hold sole signing authority. |
 | **Security Reviewer** | 1–2 | Reviews the target commit for security vulnerabilities, verifies WASM hashes match the audited source, and signs off on the security checklist. |
 | **Treasury Signer** | 2+ | Holds custody of treasury signing keys. Must independently verify artifact hashes before co-signing the deployment transaction. |

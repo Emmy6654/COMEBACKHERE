@@ -121,7 +121,7 @@ impl ComplianceContract {
         Ok(())
     }
 
-    pub fn accept_admin(_e: Env, new_admin: Address) {
+    pub fn accept_admin(e: Env, new_admin: Address) -> Result<(), ContractError> {
         new_admin.require_auth();
         let pending: Address = e
             .storage()
@@ -183,7 +183,7 @@ mod tests {
     fn setup(ts: u64) -> (Env, Address, Address, Address) {
         let e = Env::default();
         e.mock_all_auths();
-        let contract_id = e.register_contract(None, ComplianceContract);
+        let contract_id = e.register(ComplianceContract, ());
         let admin = Address::generate(&e);
         let addr = Address::generate(&e);
         ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
