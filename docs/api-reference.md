@@ -21,6 +21,30 @@ Returns service health status.
 
 ---
 
+### `GET /health/rpc`
+
+Checks Soroban RPC reachability and current ledger.
+
+**Response `200`**
+
+```json
+{
+  "rpc": "reachable",
+  "network": "mainnet",
+  "ledger": 54321678
+}
+```
+
+#### Errors
+
+| Status | Description                             |
+| ------ | --------------------------------------- |
+| `503`  | Soroban RPC unreachable                 |
+| `500`  | Unexpected server error                 |
+
+---
+
+
 ## Invoices
 
 ### `GET /invoices/:id`
@@ -303,6 +327,135 @@ Update the treasury approval threshold.
 | `500`  | Unexpected server error                          |
 
 ---
+
+### `GET /api/treasury/on-hold-settlements`
+
+Returns all settlements that are currently on hold.
+A hold is placed when a signer flags a settlement as requiring manual review before
+execution can proceed.
+
+**Query parameters:**
+
+| Parameter | Type   | Required | Description                                   |
+|-----------|--------|----------|-----------------------------------------------|
+| `page`    | number | No       | Page number (1-based, default: `1`)           |
+| `limit`   | number | No       | Results per page (default: `20`, max: `100`)  |
+
+**Response `200`**
+
+```json
+{
+  "settlements": [
+    {
+      "id": 7,
+      "merchant_address": "G...",
+      "amount": "5000000",
+      "approvals": [],
+      "approval_weight": 0,
+      "status": "OnHold",
+      "hold_reason": "Merchant KYC under review"
+    }
+  ]
+}
+```
+
+#### Errors
+
+| Status | Description             |
+| ------ | ----------------------- |
+| `500`  | Database error          |
+
+---
+
+### `POST /api/treasury/release-hold`
+
+Releases a held settlement, restoring it to `Pending` so the normal approval and
+execution flow can resume. Calls `release_hold` on the treasury contract.
+
+See also: [`release_hold` in the Contract Interaction Guide](./contract-interaction-guide.md#release-a-hold).
+
+#### Request body
+
+```json
+{ "settlement_id": 7 }
+```
+
+| Field           | Type   | Description                    |
+| --------------- | ------ | ------------------------------ |
+| `settlement_id` | number | Positive integer settlement ID |
+
+**Response `200`**
+
+```json
+{
+  "id": 7,
+  "merchant_address": "G...",
+  "amount": "5000000",
+  "approvals": [],
+  "approval_weight": 0,
+  "status": "Pending",
+  "hold_reason": null,
+  "tx_hash": "abc123..."
+}
+```
+
+#### Errors
+
+| Status | Description                                       |
+| ------ | ------------------------------------------------- |
+| `400`  | `settlement_id` is not a positive integer         |
+| `409`  | Settlement is not currently on hold               |
+| `422`  | Soroban simulation or transaction failure         |
+| `503`  | Missing required environment variables            |
+| `500`  | Unexpected server error                           |
+
+---
+
+### `POST /api/treasury/escalate-hold`
+
+Escalates a held settlement to the on-chain dispute-resolution flow.
+Calls `raise_dispute` on the treasury contract and begins a multi-sig governance
+vote among the configured signers.
+
+See also: [`raise_dispute` in the Contract Interaction Guide](./contract-interaction-guide.md#raise-a-dispute).
+
+#### Request body
+
+```json
+{
+  "settlement_id": 7,
+  "reason": "Merchant disputes the invoice amount"
+}
+```
+
+| Field           | Type   | Required | Description                                              |
+| --------------- | ------ | -------- | -------------------------------------------------------- |
+| `settlement_id` | number | Yes      | Positive integer settlement ID                           |
+| `reason`        | string | No       | Human-readable reason for escalation (max 512 chars)     |
+
+**Response `200`**
+
+```json
+{
+  "dispute_id": "7-1720000001000",
+  "settlement_id": "7",
+  "status": "Raised",
+  "settlement_status": "OnHold",
+  "tx_hash": "abc123..."
+}
+```
+
+#### Errors
+
+| Status | Description                                       |
+| ------ | ------------------------------------------------- |
+| `400`  | `settlement_id` is not a positive integer         |
+| `422`  | Soroban simulation or transaction failure         |
+| `503`  | Missing required environment variables            |
+| `500`  | Unexpected server error                           |
+
+---
+
 
 ## Invoice Settings
 
