@@ -127,3 +127,19 @@ export function removeAllowedToken(
 ): Promise<{ success: boolean; error?: string; hash?: string }> {
   return submitTokenOp("remove_allowed_token", tokenAddress)
 }
+
+export interface TreasuryBalance {
+  token: string
+  balance: string
+}
+
+/**
+ * Fetches current treasury balances for a given wallet address from the
+ * backend balances endpoint.
+ */
+export async function fetchBalances(walletAddress: string): Promise<TreasuryBalance[]> {
+  const apiBase = (import.meta.env.VITE_API_BASE as string) ?? "/api"
+  const res = await fetch(`${apiBase}/treasury/balances?address=${encodeURIComponent(walletAddress)}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<TreasuryBalance[]>
+}
