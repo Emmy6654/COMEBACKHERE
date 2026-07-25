@@ -6,6 +6,7 @@ import treasuryRouter from "./routes/treasury.js"
 import invoiceSettingsRouter from "./routes/invoice-settings.js"
 import thresholdRouter from "./routes/threshold.js"
 import disputesRouter from "./routes/disputes.js"
+import analyticsRouter from "./routes/analytics.js"
 import { rateLimitMiddleware } from "./middleware/rateLimiter.js"
 
 export function createApp() {
@@ -19,5 +20,6 @@ export function createApp() {
   app.use("/api/invoice", invoiceSettingsRouter)
   app.use("/api/treasury", thresholdRouter)
   app.use("/disputes", disputesRouter)
+  app.use("/api/analytics", analyticsRouter)
   return app
 }
