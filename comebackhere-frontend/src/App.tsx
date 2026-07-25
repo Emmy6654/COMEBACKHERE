@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { InvoicePayment } from "./components/InvoicePayment"
 import { RefundRequest } from "./components/RefundRequest"
 import { ComplianceManager } from "./components/ComplianceManager"
@@ -88,9 +88,14 @@ function RefundTab() {
 }
 
 export default function App() {
-  const { address, connected, connect, connecting } = useWallet()
+  const { address, connected, connect, connecting, disconnect } = useWallet()
   useTheme()
   const [tab, setTab] = useState<Tab>("payment")
+
+  const handleDisconnect = useCallback(() => {
+    disconnect()
+    setTab("payment")
+  }, [disconnect])
 
   return (
     <div className="app">
@@ -98,9 +103,18 @@ export default function App() {
         <h1>ComebackHere</h1>
         <div className="wallet-bar">
           {connected ? (
-            <span className="wallet-address" aria-label={`Wallet connected: ${address}`}>
-              Connected: {address?.slice(0, 6)}...{address?.slice(-4)}
-            </span>
+            <>
+              <span className="wallet-address" aria-label={`Wallet connected: ${address}`}>
+                Connected: {address?.slice(0, 6)}...{address?.slice(-4)}
+              </span>
+              <button
+                className="btn btn--secondary btn--sm"
+                onClick={handleDisconnect}
+                aria-label="Disconnect wallet"
+              >
+                Disconnect
+              </button>
+            </>
           ) : (
             <button
               className="btn btn--primary btn--sm"
