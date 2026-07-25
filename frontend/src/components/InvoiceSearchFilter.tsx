@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Invoice, InvoiceStatus } from "../../types";
 import "./InvoiceSearchFilter.css";
 
@@ -12,6 +12,8 @@ const ALL_STATUSES: InvoiceStatus[] = [
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50] as const;
+// Configurable debounce interval (in milliseconds)
+const SEARCH_DEBOUNCE_MS = 300;
 
 interface Props {
   invoices: Invoice[];
@@ -23,15 +25,34 @@ function formatDate(ts: number | null): string {
 }
 
 export default function InvoiceSearchFilter({ invoices }: Props) {
-  const [query, setQuery] = useState("");
+  const [inputQuery, setInputQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | "">("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(10);
   const [page, setPage] = useState(1);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce the search query input
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      setDebouncedQuery(inputQuery);
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [inputQuery]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     const fromTs = dateFrom ? new Date(dateFrom).getTime() / 1000 : null;
     const toTs = dateTo ? new Date(dateTo).getTime() / 1000 + 86400 : null;
 
@@ -44,13 +65,17 @@ export default function InvoiceSearchFilter({ invoices }: Props) {
       if (toTs && inv.created_at !== null && inv.created_at > toTs) return false;
       return true;
     });
-  }, [invoices, query, statusFilter, dateFrom, dateTo]);
+  }, [invoices, debouncedQuery, statusFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageItems = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handleFilterChange = () => setPage(1);
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputQuery(e.target.value);
+    handleFilterChange();
+  };
 
   return (
     <div className="invoice-filter">
@@ -59,8 +84,8 @@ export default function InvoiceSearchFilter({ invoices }: Props) {
           className="invoice-filter__search"
           type="search"
           placeholder="Search by invoice ID or merchant address…"
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); handleFilterChange(); }}
+          value={inputQuery}
+          onChange={handleSearchChange}
           aria-label="Search invoices"
         />
 
