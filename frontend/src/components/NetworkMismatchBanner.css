@@ -1,0 +1,96 @@
+.network-mismatch-banner {
+  background: linear-gradient(135deg, #fff5e6 0%, #ffe6e6 100%);
+  border: 2px solid #ff9800;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  box-shadow: 0 2px 8px rgba(255, 152, 0, 0.15);
+}
+
+.network-mismatch-banner__content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.network-mismatch-banner__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #d32f2f;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-mismatch-banner__title::before {
+  content: "⚠️";
+  font-size: 20px;
+}
+
+.network-mismatch-banner__message {
+  margin: 0;
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.network-mismatch-banner__message strong {
+  font-weight: 600;
+  color: #d32f2f;
+}
+
+.network-mismatch-banner__details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.network-mismatch-banner__label {
+  display: block;
+  font-weight: 500;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.network-mismatch-banner__value {
+  display: block;
+  font-weight: 600;
+  color: #1976d2;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.network-mismatch-banner__action {
+  margin: 0;
+  font-size: 13px;
+  color: #d32f2f;
+  font-weight: 500;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .network-mismatch-banner {
+    padding: 12px;
+    margin: 12px 0;
+  }
+
+  .network-mismatch-banner__title {
+    font-size: 16px;
+  }
+
+  .network-mismatch-banner__message {
+    font-size: 13px;
+  }
+
+  .network-mismatch-banner__details {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 8px;
+  }
+}

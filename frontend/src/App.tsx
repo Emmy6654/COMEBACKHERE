@@ -11,6 +11,8 @@ import GraceWindowSettings from "./components/GraceWindowSettings/GraceWindowSet
 import SettlementDetail from "./components/SettlementDetail/SettlementDetail";
 import OnHoldSettlements from "./components/OnHoldSettlements/OnHoldSettlements";
 import TreasuryManagerPage from "./components/TreasuryManagerPage/TreasuryManagerPage";
+import NetworkMismatchBanner from "./components/NetworkMismatchBanner";
+import ThresholdConfig from "./components/ThresholdConfig/ThresholdConfig";
 import { ThemeProvider, useTheme } from "./theme";
 import { Invoice } from "./types";
 
@@ -134,6 +136,7 @@ function AppRoutes() {
 export default function App() {
   return (
     <ThemeProvider>
+      <NetworkMismatchBanner />
       <AppRoutes />
     </ThemeProvider>
   );
