@@ -208,5 +208,50 @@ tbody td {
 .empty-state {
   text-align: center;
   padding: 48px 16px;
-  color: #9ca3af;
+  color: #6b7280;
+}
+
+/* ── Accessibility ─────────────────────────────────────────────── */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 8px;
+  padding: 8px 16px;
+  background: #4f46e5;
+  color: #fff;
+  border-radius: 0 0 6px 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  z-index: 1000;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* Focus-visible styles for interactive elements */
+.controls input:focus-visible,
+.controls select:focus-visible,
+.controls button:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+thead th:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: -2px;
 }
