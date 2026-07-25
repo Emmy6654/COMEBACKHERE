@@ -493,6 +493,46 @@ h3 {
   justify-content: flex-end;
 }
 
+/* Modal error state */
+.modal-error-state {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  align-items: flex-start;
+}
+
+.error-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.error-content {
+  flex: 1;
+}
+
+.error-content h3 {
+  font-size: 0.95rem;
+  margin-bottom: 6px;
+  color: var(--color-danger);
+}
+
+.error-message {
+  font-size: 0.85rem;
+  color: var(--color-danger);
+  margin-bottom: 8px;
+  font-family: monospace;
+  word-break: break-word;
+}
+
+.error-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
 /* Refund */
 .refund-section {
   padding: 16px;
