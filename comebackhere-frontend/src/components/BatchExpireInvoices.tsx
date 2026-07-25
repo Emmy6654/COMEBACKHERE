@@ -10,6 +10,19 @@ interface BatchExpireInvoicesProps {
   walletAddress: string | null
 }
 
+interface ConfirmationState {
+  show: boolean
+  invoiceIds: string[]
+  invoiceCount: number
+}
+
+interface ResultSummary {
+  total: number
+  succeeded: number
+  failed: number
+  errors: { id: string; msg: string }[]
+}
+
 export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps) {
   const [idInput, setIdInput] = useState("")
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -24,6 +37,12 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
     errorMsg?: string
   } | null>(null)
   const [errors, setErrors] = useState<{ id: string; msg: string }[]>([])
+  const [confirmation, setConfirmation] = useState<ConfirmationState>({
+    show: false,
+    invoiceIds: [],
+    invoiceCount: 0,
+  })
+  const [resultSummary, setResultSummary] = useState<ResultSummary | null>(null)
 
   const pendingInvoices = invoices.filter((inv) => inv.status === InvoiceStatus.Pending)
   const allSelected =
@@ -36,6 +55,8 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
     setBatchResult(null)
     setErrors([])
     setProgress(null)
+    setConfirmation({ show: false, invoiceIds: [], invoiceCount: 0 })
+    setResultSummary(null)
 
     const ids = idInput
       .split(",")
@@ -85,6 +106,19 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
     })
   }
 
+  const handleShowConfirmation = () => {
+    const selectedIds = Array.from(selected).sort((a, b) => Number(a) - Number(b))
+    setConfirmation({
+      show: true,
+      invoiceIds: selectedIds,
+      invoiceCount: selectedIds.length,
+    })
+  }
+
+  const handleCancelConfirmation = () => {
+    setConfirmation({ show: false, invoiceIds: [], invoiceCount: 0 })
+  }
+
   const handleBatchExpire = async () => {
     if (!walletAddress || selected.size === 0) return
 
@@ -93,6 +127,7 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
     setErrors([])
     setProgress({ done: 0, total: selectedIds.length })
     setSubmitting(true)
+    setConfirmation({ show: false, invoiceIds: [], invoiceCount: 0 })
 
     const result = await batchExpireInvoices(CONTRACT_ID, selectedIds, walletAddress)
 
@@ -100,11 +135,13 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
       setSubmitting(false)
       setProgress(null)
       setBatchResult({ success: false, errorMsg: result.error })
+      setResultSummary(null)
       return
     }
 
     const errorList: { id: string; msg: string }[] = []
     let done = 0
+    let succeeded = 0
 
     for (const id of selectedIds) {
       try {
@@ -117,6 +154,8 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
             id: String(id),
             msg: `Invoice #${id} was not expired (status: ${updated.status})`,
           })
+        } else {
+          succeeded++
         }
       } catch (err: unknown) {
         errorList.push({
@@ -131,6 +170,12 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
     setSubmitting(false)
     setErrors(errorList)
     setBatchResult({ success: true, hash: result.transaction_hash })
+    setResultSummary({
+      total: selectedIds.length,
+      succeeded,
+      failed: errorList.length,
+      errors: errorList,
+    })
     setSelected(new Set())
   }
 
@@ -173,7 +218,37 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
         </div>
       )}
 
-      {errors.length > 0 && (
+      {resultSummary && (
+        <div className="batch-result-summary" role="status" aria-live="polite">
+          <h3>Batch Processing Summary</h3>
+          <div className="summary-stats">
+            <div className="summary-stat">
+              <span className="stat-label">Total Invoices</span>
+              <span className="stat-value">{resultSummary.total}</span>
+            </div>
+            <div className="summary-stat summary-stat--success">
+              <span className="stat-label">Successfully Expired</span>
+              <span className="stat-value">{resultSummary.succeeded}</span>
+            </div>
+            <div className={`summary-stat${resultSummary.failed > 0 ? " summary-stat--error" : ""}`}>
+              <span className="stat-label">Failed</span>
+              <span className="stat-value">{resultSummary.failed}</span>
+            </div>
+          </div>
+          {resultSummary.errors.length > 0 && (
+            <div className="summary-errors">
+              <strong>Errors:</strong>
+              <ul className="error-list">
+                {resultSummary.errors.map((e) => (
+                  <li key={e.id}>{e.msg}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {errors.length > 0 && !resultSummary && (
         <div className="message message--error">
           <strong>Some invoices could not be expired:</strong>
           <ul className="error-list">
@@ -187,13 +262,67 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
       {progress && (
         <div className="progress-bar-wrapper">
           <p className="status-text">
-            Verifying {progress.done} of {progress.total} invoices...
+            Processing {progress.done} of {progress.total} invoices...
           </p>
           <div className="progress-bar">
             <div
               className="progress-bar__fill"
               style={{ width: `${(progress.done / progress.total) * 100}%` }}
+              role="progressbar"
+              aria-valuenow={progress.done}
+              aria-valuemin={0}
+              aria-valuemax={progress.total}
+              aria-label="Batch expiration progress"
             />
+          </div>
+        </div>
+      )}
+
+      {confirmation.show && (
+        <div className="modal-overlay" onClick={handleCancelConfirmation} role="presentation">
+          <div
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-batch-title"
+          >
+            <h2 id="confirm-batch-title">Confirm Batch Expiration</h2>
+            <p className="modal-desc">
+              You are about to expire{" "}
+              <strong>{confirmation.invoiceCount}</strong> invoice{confirmation.invoiceCount !== 1 ? "s" : ""}.
+              This action cannot be undone.
+            </p>
+
+            <div className="confirmation-details">
+              <h3>Invoices to be expired:</h3>
+              <div className="invoice-ids-list">
+                {confirmation.invoiceIds.map((id) => (
+                  <span key={id} className="invoice-id-badge">
+                    #{id}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="modal-actions" role="group" aria-label="Batch expiration confirmation actions">
+              <button
+                className="btn btn--secondary"
+                onClick={handleCancelConfirmation}
+                disabled={submitting}
+                aria-label="Cancel batch expiration"
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn--danger"
+                onClick={handleBatchExpire}
+                disabled={submitting}
+                aria-label={submitting ? "Processing batch expiration" : "Confirm batch expiration"}
+              >
+                {submitting ? "Processing..." : "Confirm Expiration"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -203,8 +332,9 @@ export function BatchExpireInvoices({ walletAddress }: BatchExpireInvoicesProps)
           <div className="batch-expire__actions">
             <button
               className="btn btn--danger"
-              onClick={handleBatchExpire}
+              onClick={handleShowConfirmation}
               disabled={submitting || selected.size === 0 || !walletAddress}
+              aria-label={`Expire ${selected.size} selected invoices`}
             >
               {submitting
                 ? "Expiring..."
