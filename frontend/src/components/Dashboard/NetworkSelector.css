@@ -1,0 +1,29 @@
+.network-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.network-selector__select {
+  padding: 6px 10px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius);
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.network-selector__select:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.network-selector__warning {
+  padding: 8px 12px;
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger-soft-text);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}

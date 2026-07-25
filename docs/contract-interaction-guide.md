@@ -1,306 +1,435 @@
 # Contract Interaction Guide
 
-This guide provides realistic `soroban` CLI examples for interacting with the three COMEBACKHERE contracts — **invoice**, **treasury**, and **compliance** — deployed on Stellar testnet or mainnet.
+Step-by-step guide for calling COMEBACKHERE Protocol contracts via `soroban-cli` and the backend API.
 
-> **Prerequisites**
->
-> - [Soroban CLI](https://developers.stellar.org/docs/soroban/soroban-cli) installed
-> - Contract IDs for each deployed contract
-> - A funded Stellar account with its secret key configured locally:
->
->   ```sh
->   soroban config identity generate alice
->   soroban config identity fund alice
->   ```
+## Prerequisites
 
----
+- Funded Stellar account on the target network
+- Deployed contracts — IDs available in `artifacts/addresses.json`
+- Configured `.env` (copy from `.env.local.example` or `.env.testnet.example`)
+- `soroban-cli` installed: `cargo install soroban-cli`
 
-## Common Flags
+Placeholder values used throughout:
 
-All examples assume the following aliased flags. Adjust values for your network.
-
-```sh
-# Testnet
-NETWORK="--network testnet"
-RPC="--rpc-url https://soroban-testnet.stellar.org"
-PASSPHRASE="--network-passphrase 'Test SDF Network ; September 2025'"
-
-# Mainnet
-# NETWORK="--network mainnet"
-# RPC="--rpc-url https://soroban-mainnet.stellar.org"
-# PASSPHRASE="--network-passphrase 'Public Global Stellar Network ; September 2025'"
-
-# Shortcut alias
-SOROBAN="soroban contract invoke $NETWORK $RPC $PASSPHRASE"
-```
+| Placeholder           | Replace with                                     |
+| --------------------- | ------------------------------------------------ |
+| `$INVOICE_CONTRACT`   | Invoice contract ID from `artifacts/addresses.json` |
+| `$TREASURY_CONTRACT`  | Treasury contract ID                             |
+| `$COMPLIANCE_CONTRACT`| Compliance contract ID                           |
+| `$SOURCE_ACCOUNT`     | Your funded Stellar public key                   |
+| `$SECRET_KEY`         | Your Stellar secret key                          |
+| `$RPC_URL`            | Soroban RPC endpoint (e.g. `http://localhost:8000/soroban/rpc`) |
+| `$NETWORK_PASSPHRASE` | Network passphrase from your `.env`              |
 
 ---
 
 ## Invoice Contract
 
-### Create an Invoice
+### Create an invoice
+
+#### soroban-cli
 
 ```sh
-$SOROBAN \
-  --id <INVOICE_CONTRACT_ID> \
-  --source alice \
-  -- \
-  create_invoice \
-  --merchant "$(soroban config identity address alice)" \
-  --amount_usdc 10000000 \
-  --gross_usdc 10500000 \
-  --expires_in_seconds 3600 \
-  --metadata_hash "0xabcd...1234" \
-  --payment_link_hash "0xef56...7890"
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- create_invoice \
+  --merchant $SOURCE_ACCOUNT \
+  --customer GCUSTOMER... \
+  --amount 1000000 \
+  --token CUSDC... \
+  --expires_at 1750000000 \
+  --nonce 1
 ```
 
-### Mark an Invoice as Paid
+#### API
 
 ```sh
-$SOROBAN \
-  --id <INVOICE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  mark_paid \
+curl -X POST http://localhost:3000/invoices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "merchant_address": "$SOURCE_ACCOUNT",
+    "token": "USDC",
+    "amount": 1000000,
+    "due_date": 1750000000
+  }'
+```
+
+Response includes `invoice_id` to use in subsequent calls.
+
+---
+
+### Get invoice status
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- get_invoice_status \
+  --invoice_id 1
+```
+
+#### API
+
+```sh
+curl http://localhost:3000/invoices/1
+```
+
+---
+
+### Mark invoice as paid
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- mark_paids \
+  --invoice_ids '[1]'
+```
+
+---
+
+### Raise a dispute
+
+Calling `raise_dispute` on the invoice contract atomically calls
+`raise_dispute` on the treasury contract, placing the referenced
+settlement `OnHold`.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- raise_dispute \
   --invoice_id 1 \
-  --payer "$(soroban config identity address bob)"
+  --settlement_id 3 \
+  --claimant $SOURCE_ACCOUNT \
+  --reason 1
 ```
 
-### Request a Refund
+#### API
 
 ```sh
-$SOROBAN \
-  --id <INVOICE_CONTRACT_ID> \
-  --source bob \
-  -- \
-  request_refund \
-  --invoice_id 1
+curl -X POST http://localhost:3000/disputes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "claimant_address": "$SOURCE_ACCOUNT",
+    "settlement_id": "3",
+    "reason": "Goods not delivered"
+  }'
 ```
 
-### Release Escrow
+---
+
+### Configure treasury address (admin only)
 
 ```sh
-$SOROBAN \
-  --id <INVOICE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  release_escrow \
-  --invoice_id 1
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- set_treasury \
+  --caller $SOURCE_ACCOUNT \
+  --treasury $TREASURY_CONTRACT
 ```
 
 ---
 
 ## Treasury Contract
 
-### Propose a Settlement
+### Propose a settlement
+
+#### soroban-cli
 
 ```sh
-$SOROBAN \
-  --id <TREASURY_CONTRACT_ID> \
-  --source signer_a \
-  -- \
-  propose_settlement \
-  --merchant_address "$(soroban config identity address merchant)" \
-  --token_contract "$(soroban config identity address usdc)" \
-  --amount 10000000 \
-  --memo "Invoice #1 settlement"
+soroban contract invoke \
+  --id $TREASURY_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- propose_settlement \
+  --signer $SOURCE_ACCOUNT \
+  --token CUSDC... \
+  --amount 5000000 \
+  --merchant GMERCHANT...
 ```
 
-### Approve a Settlement
+Returns the `settlement_id`.
+
+---
+
+### Approve a settlement
+
+#### soroban-cli
 
 ```sh
-$SOROBAN \
-  --id <TREASURY_CONTRACT_ID> \
-  --source signer_b \
-  -- \
-  approve_settlement \
+soroban contract invoke \
+  --id $TREASURY_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- approve_settlement \
+  --signer $SOURCE_ACCOUNT \
   --settlement_id 1
 ```
 
-### Execute a Settlement
+#### API
 
 ```sh
-$SOROBAN \
-  --id <TREASURY_CONTRACT_ID> \
-  --source signer_a \
-  -- \
-  execute_settlement \
-  --settlement_id 1
+curl -X POST http://localhost:3000/api/treasury/approve-settlement \
+  -H "Content-Type: application/json" \
+  -d '{ "settlement_id": 1 }'
 ```
 
-### Raise a Dispute
+---
+
+### Execute a settlement
+
+#### soroban-cli
 
 ```sh
-$SOROBAN \
-  --id <TREASURY_CONTRACT_ID> \
-  --source bob \
-  -- \
-  raise_dispute \
+soroban contract invoke \
+  --id $TREASURY_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- execute_settlement \
+  --signer $SOURCE_ACCOUNT \
   --settlement_id 1 \
-  --reason "Goods not received"
+  --token_contract CUSDC...
+```
+
+#### API
+
+The execute endpoint validates the treasury USDC balance before submitting.
+
+```sh
+curl -X POST http://localhost:3000/api/treasury/execute-settlement \
+  -H "Content-Type: application/json" \
+  -d '{ "settlement_id": 1 }'
+```
+
+---
+
+
+### Place a settlement on hold
+
+Calls `hold_settlement` on the treasury contract, preventing execution until
+explicitly released or escalated.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \\
+  --id $TREASURY_CONTRACT \\
+  --source $SECRET_KEY \\
+  --rpc-url $RPC_URL \\
+  --network-passphrase "$NETWORK_PASSPHRASE" \\
+  -- hold_settlement \\
+  --signer $SOURCE_ACCOUNT \\
+  --settlement_id 7 \\
+  --reason "Awaiting KYC confirmation"
+```
+
+---
+
+### Release a hold
+
+Calls `release_hold` on the treasury contract, returning the settlement to `Pending`
+so the normal approval and execution flow can resume.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \\
+  --id $TREASURY_CONTRACT \\
+  --source $SECRET_KEY \\
+  --rpc-url $RPC_URL \\
+  --network-passphrase "$NETWORK_PASSPHRASE" \\
+  -- release_hold \\
+  --signer $SOURCE_ACCOUNT \\
+  --settlement_id 7
+```
+
+#### API
+
+```sh
+curl -X POST http://localhost:3000/api/treasury/release-hold \\
+  -H "Content-Type: application/json" \\
+  -d '{ "settlement_id": 7 }'
+```
+
+---
+
+### Raise a dispute (escalate hold)
+
+Calls `raise_dispute` on the treasury contract, escalating the hold to the
+governance dispute-resolution flow and beginning a multi-sig vote.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \\
+  --id $TREASURY_CONTRACT \\
+  --source $SECRET_KEY \\
+  --rpc-url $RPC_URL \\
+  --network-passphrase "$NETWORK_PASSPHRASE" \\
+  -- raise_dispute \\
+  --signer $SOURCE_ACCOUNT \\
+  --settlement_id 7 \\
+  --reason "Merchant disputes the invoice amount"
+```
+
+#### API
+
+```sh
+curl -X POST http://localhost:3000/api/treasury/escalate-hold \\
+  -H "Content-Type: application/json" \\
+  -d '{ "settlement_id": 7, "reason": "Merchant disputes the invoice amount" }'
+```
+
+---
+
+### Get / set approval threshold
+
+#### soroban-cli — read
+
+```sh
+soroban contract invoke \
+  --id $TREASURY_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- get_threshold
+```
+
+#### soroban-cli — update
+
+```sh
+soroban contract invoke \
+  --id $TREASURY_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- update_threshold \
+  --admin $SOURCE_ACCOUNT \
+  --new_threshold 3
+```
+
+#### API — read
+
+```sh
+curl http://localhost:3000/api/treasury/threshold
+```
+
+#### API — update
+
+```sh
+curl -X POST http://localhost:3000/api/treasury/threshold \
+  -H "Content-Type: application/json" \
+  -d '{ "threshold": 3 }'
 ```
 
 ---
 
 ## Compliance Contract
 
-The **compliance** contract maintains an allowlist of Stellar addresses permitted to participate in the protocol. It supports temporary grants, full blocking, and secure admin delegation.
+### Allow an address
 
-### Check if an Address Is Allowed
-
-```sh
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source alice \
-  -- \
-  is_allowed \
-  --address "$(soroban config identity address alice)"
-```
-
-Returns `true` if the address is currently allowlisted.
-
-### Add an Address to the Allowlist (`allow_address`)
-
-Permanently adds a Stellar address to the allowlist. Only the contract admin may call this.
+#### soroban-cli
 
 ```sh
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  allow_address \
-  --address "$(soroban config identity address merchant)"
+soroban contract invoke \
+  --id $COMPLIANCE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- allow_address \
+  --admin $SOURCE_ACCOUNT \
+  --address GTARGET...
 ```
-
-After execution, `is_allowed` returns `true` for the merchant address.
-
-### Block an Address (`block_address`)
-
-Removes a Stellar address from the allowlist entirely, revoking all participation rights.
-
-```sh
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  block_address \
-  --address "$(soroban config identity address malicious_actor)"
-```
-
-The blocked address can be re-added later with another `allow_address` call.
-
-### Allow an Address Until a Specific Time (`allow_address_until`)
-
-Grants temporary access until a specified Unix timestamp (in seconds). After the timestamp passes, `is_allowed` returns `false` for that address.
-
-```sh
-# Allow merchant until January 1, 2027 00:00:00 UTC
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  allow_address_until \
-  --address "$(soroban config identity address merchant)" \
-  --until 1798761600
-```
-
-### Clear an Address (`clear_address`)
-
-Resets an address's compliance state to its default (neither explicitly allowed nor blocked). This is useful for cleaning up after a temporary grant expires or resetting a test address.
-
-```sh
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  clear_address \
-  --address "$(soroban config identity address merchant)"
-```
-
-### Admin Transfer Flow (`transfer_admin` / `accept_admin`)
-
-Admin ownership of the compliance contract is transferred in two steps to prevent accidental lockout.
-
-**Step 1 — Current admin nominates a new admin:**
-
-```sh
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source admin \
-  -- \
-  transfer_admin \
-  --new_admin "$(soroban config identity address new_admin)"
-```
-
-**Step 2 — The nominated admin accepts the role:**
-
-```sh
-$SOROBAN \
-  --id <COMPLIANCE_CONTRACT_ID> \
-  --source new_admin \
-  -- \
-  accept_admin
-```
-
-After step 2 completes, `new_admin` becomes the contract admin and the previous admin loses admin privileges.
-
-> **Note:** If `accept_admin` is never called, the original admin remains in control. There is no timeout on the pending transfer.
 
 ---
 
-## Cross-Contract Workflow
+### Block an address
 
-A typical end-to-end flow touches all three contracts:
-
-1. **Compliance**: Admin adds the merchant to the allowlist (`allow_address`).
-2. **Invoice**: Merchant creates an invoice (`create_invoice`).
-3. **Invoice**: Admin marks the invoice as paid (`mark_paid`).
-4. **Invoice**: Admin releases escrow (`release_escrow`).
-5. **Treasury**: A signer proposes settlement (`propose_settlement`).
-6. **Treasury**: Additional signers approve (`approve_settlement`).
-7. **Treasury**: A signer executes the settlement (`execute_settlement`).
+#### soroban-cli
 
 ```sh
-# 1. Allowlist the merchant
-$SOROBAN --id <COMPLIANCE_CONTRACT_ID> --source admin -- \
-  allow_address --address "$(soroban config identity address merchant)"
-
-# 2. Create and process the invoice
-$SOROBAN --id <INVOICE_CONTRACT_ID> --source merchant -- \
-  create_invoice --merchant "$(soroban config identity address merchant)" \
-  --amount_usdc 10000000 --gross_usdc 10500000 --expires_in_seconds 86400
-
-$SOROBAN --id <INVOICE_CONTRACT_ID> --source admin -- \
-  mark_paid --invoice_id 1 --payer "$(soroban config identity address payer)"
-
-# 3. Settle through the treasury
-$SOROBAN --id <TREASURY_CONTRACT_ID> --source signer_a -- \
-  propose_settlement --merchant_address "$(soroban config identity address merchant)" \
-  --token_contract <USDC_CONTRACT_ID> --amount 10000000 --memo "Invoice #1"
-
-$SOROBAN --id <TREASURY_CONTRACT_ID> --source signer_b -- \
-  approve_settlement --settlement_id 1
-
-$SOROBAN --id <TREASURY_CONTRACT_ID> --source signer_a -- \
-  execute_settlement --settlement_id 1
+soroban contract invoke \
+  --id $COMPLIANCE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- block_address \
+  --admin $SOURCE_ACCOUNT \
+  --address GTARGET...
 ```
 
-## Reference: Function Signatures
+---
 
-| Contract     | Function               | Key Parameters                                                                                                                      |
-|--------------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| Invoice      | `create_invoice`       | `merchant`, `amount_usdc`, `gross_usdc`, `expires_in_seconds`, `metadata_hash?`, `payment_link_hash?`                               |
-| Invoice      | `mark_paid`            | `invoice_id`, `payer`                                                                                                               |
-| Invoice      | `request_refund`       | `invoice_id`                                                                                                                        |
-| Invoice      | `release_escrow`       | `invoice_id`                                                                                                                        |
-| Treasury     | `propose_settlement`   | `merchant_address`, `token_contract`, `amount`, `memo?`                                                                             |
-| Treasury     | `approve_settlement`   | `settlement_id`                                                                                                                     |
-| Treasury     | `execute_settlement`   | `settlement_id`                                                                                                                     |
-| Treasury     | `raise_dispute`        | `settlement_id`, `reason?`                                                                                                          |
-| Compliance   | `is_allowed`           | `address` — returns `true` if the address is allowlisted                                                                            |
-| Compliance   | `allow_address`        | `address`                                                                                                                           |
-| Compliance   | `block_address`        | `address`                                                                                                                           |
-| Compliance   | `allow_address_until`  | `address`, `until: u64`                                                                                                             |
-| Compliance   | `transfer_admin`       | `new_admin`                                                                                                                         |
-| Compliance   | `accept_admin`         | _(no params)_                                                                                                                       |
-| Compliance   | `clear_address`        | `address`                                                                                                                           |
+## Invoice grace window
+
+### Read
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- get_grace_window
+```
+
+#### API
+
+```sh
+curl http://localhost:3000/api/invoice/grace-window
+```
+
+### Update (admin only)
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \
+  --id $INVOICE_CONTRACT \
+  --source $SECRET_KEY \
+  --rpc-url $RPC_URL \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- set_grace_window \
+  --caller $SOURCE_ACCOUNT \
+  --window 172800
+```
+
+#### API
+
+```sh
+curl -X POST http://localhost:3000/api/invoice/grace-window \
+  -H "Content-Type: application/json" \
+  -d '{ "grace_window_seconds": 172800 }'
+```
+
+---
+
+## Tips
+
+- All contract write operations require `--source` to be a funded account with sufficient XLM for fees.
+- Use `--network testnet` instead of `--rpc-url` / `--network-passphrase` flags when targeting Testnet via the CLI default configuration.
+- Contract IDs and addresses are exported to `artifacts/addresses.json` after running a deployment script.

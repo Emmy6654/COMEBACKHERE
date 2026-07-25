@@ -5,6 +5,31 @@
 
 Tooling, deployment scripts, ABIs, and integration resources for COMEBACKHERE Protocol.
 
+## Architecture
+
+The following sequence diagram illustrates the primary payment flow.
+
+```mermaid
+sequenceDiagram
+    actor Merchant
+    actor Payer
+    participant InvoiceContract
+    participant TreasuryContract
+
+    Merchant->>InvoiceContract: create_invoice(amount, expires_at)
+    InvoiceContract-->>Merchant: invoice_id
+
+    Payer->>InvoiceContract: mark_paid(invoice_id)
+    InvoiceContract->>TreasuryContract: hold funds
+    InvoiceContract-->>Payer: payment confirmed
+
+    Merchant->>TreasuryContract: propose_settlement(invoice_id)
+    TreasuryContract-->>Merchant: settlement_id
+
+    Merchant->>TreasuryContract: approve_settlement(settlement_id)
+    TreasuryContract->>Merchant: release payout
+```
+
 ## Workspace
 
 - `abis/`: committed ABI metadata consumed by `comebackhere-backend`

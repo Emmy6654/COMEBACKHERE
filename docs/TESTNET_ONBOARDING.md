@@ -1,136 +1,430 @@
-# Testnet Onboarding Guide
+# COMEBACKHERE Testnet Onboarding Guide
 
-This guide walks through setting up a browser wallet on Stellar testnet for use with **comebackhere-frontend** — the payer-facing application where users pay invoices and request refunds.
-
-> **Note:** For the merchant dashboard (admin/signer UI), see `comebackhere-frontend`'s own setup docs in that repository. This guide focuses on the **payer** experience.
-
----
+This guide walks you through the complete end-to-end flow on the Stellar testnet:
+funding an account, deploying contracts, creating an invoice, paying it with USDC,
+and executing a settlement.
 
 ## Prerequisites
 
-- A browser-based Stellar wallet (e.g., [Freighter](https://www.freighter.app/) or [xBull](https://xbull.app/))
-- Chrome, Firefox, or Brave browser
+- [Rust](https://rustup.rs/) with the `wasm32-unknown-unknown` target installed
+- [Stellar CLI (`stellar`)](https://github.com/stellar/stellar-cli) v21+
+- [Docker & Docker Compose](https://docs.docker.com/get-docker/) (for local Soroban node, optional)
+- A text editor and terminal
 
----
+## 1. Create and Fund a Testnet Account
 
-## Step 1: Install and Configure a Wallet
+Stellar testnet provides Friendbot, a faucet that funds any testnet account with
+10,000 XLM.
 
-### Freighter (Recommended)
-
-1. Install the [Freighter](https://www.freighter.app/) browser extension.
-2. Open Freighter and click **"Create a new wallet"** (or import an existing one).
-3. Save your seed phrase in a secure location.
-4. Once the wallet is created, click the network dropdown in the top-left corner and select **"Testnet"**.
-
-### xBull Wallet
-
-1. Install the [xBull](https://xbull.app/) browser extension.
-2. Create a new wallet or import an existing one.
-3. Open settings and switch the network to **"Testnet"**.
-
----
-
-## Step 2: Fund Your Wallet on Testnet
-
-Stellar provides a **Friendbot** service that sends free testnet XLM to any new account.
-
-### Via Freighter (Built-in)
-
-1. Open Freighter and navigate to your account.
-2. Click the **"Fund with Friendbot"** button (only visible when the wallet is set to Testnet).
-
-### Via Stellar Laboratory
-
-1. Copy your Stellar public address (G...) from your wallet.
-2. Open the [Stellar Laboratory Friendbot](https://laboratory.stellar.org/#create-account?network=testnet).
-3. Paste your address into the **"Fund an account using Friendbot"** field.
-4. Click **"Get testnet funds"**.
-
-### Via Stellar Quest
-
-1. Visit [Stellar Quest](https://quest.stellar.org/) and connect your wallet.
-2. Complete any quest to earn testnet funds and USDC.
-
-### Verify the Funding
-
-After funding, check your balance in the wallet extension. You should see at least 10,000 testnet XLM.
-
----
-
-## Step 3: Obtain Testnet USDC
-
-Most invoices require USDC. You can obtain testnet USDC from the Stellar Testnet USDC issuer.
-
-### Via Laboratory Swap
-
-1. Go to the [Stellar Laboratory Payments page](https://laboratory.stellar.org/#xdr-viewer?network=testnet).
-2. Use the **"Build Transaction"** tool to create a `ManageSellOffer` or trustline operation.
-3. Alternatively, use the **Stellar Expert** or contact the protocol team for testnet USDC faucet access.
-
-### Via the COMEBACKHERE Testnet Faucet
-
-If a testnet faucet endpoint is available:
+### Generate a keypair
 
 ```sh
-curl -X POST https://faucet.testnet.comebackhere.dev/fund \
-  -H "Content-Type: application/json" \
-  -d '{"address": "G...YOUR_ADDRESS...", "amount_usdc": "10000000"}'
+stellar keys generate testnet-admin --network testnet
+stellar keys address testnet-admin
+# Outputs: GXXXX... (your public key)
 ```
 
----
+### Fund via Friendbot
 
-## Step 4: Connect Your Wallet to comebackhere-frontend
+```sh
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address testnet-admin)"
+```
 
-### Network Configuration
+You should receive a JSON response confirming the account was created and funded.
+Verify the balance:
 
-The frontend application (`comebackhere-frontend`) expects the following configuration. These values are already set in the testnet deployment, but you can verify them in the app's settings or `.env`:
+```sh
+stellar keys address testnet-admin
+# Check on https://horizon-testnet.stellar.org/accounts/<YOUR_PUBLIC_KEY>
+```
 
-|         Variable          |                       Testnet Value                        |
-|---------------------------|------------------------------------------------------------|
-| `VITE_SOROBAN_RPC`        | `https://soroban-testnet.stellar.org`                      |
-| `VITE_HORIZON_URL`        | `https://horizon-testnet.stellar.org`                      |
-| `VITE_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2025`                        |
-| `VITE_API_URL`            | Backend URL (e.g., `https://api.testnet.comebackhere.dev`) |
+### Create additional accounts
 
-> These variables are defined in `comebackhere-frontend/src/utils/soroban.ts`. If you are running the frontend locally, verify your `.env` values match the table above.
+You will need at least two accounts for the full flow — one acts as the merchant
+(invoice creator) and one acts as the payer.
 
-### Connecting in the Browser
+```sh
+stellar keys generate testnet-merchant --network testnet
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address testnet-merchant)"
 
-1. Navigate to the **comebackhere-frontend** URL (e.g., `https://pay.testnet.comebackhere.dev`).
-2. Click **"Connect Wallet"**.
-3. Your browser wallet (Freighter/xBull) will prompt you to connect — approve the connection.
-4. The app will verify that your wallet is on the **Testnet** network. If it detects `Public Global Stellar Network ; September 2025`, it will prompt you to switch to testnet.
-5. Once connected, you will see your Stellar public address and balance in the top-right corner.
+stellar keys generate testnet-payer --network testnet
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address testnet-payer)"
+```
 
----
+## 2. Configure Environment
 
-## Step 5: Make a Test Payment
+Copy the testnet example environment and fill in your keys:
 
-1. Open a payment link or navigate to an invoice in the app.
-2. Review the invoice details (merchant, amount, description).
-3. Click **"Pay Invoice"**.
-4. Your wallet will display the transaction for approval — verify the details and confirm.
-5. Wait for the transaction to be confirmed (typically 3–5 seconds on testnet).
-6. You will see a success confirmation. The invoice now shows as **Paid**.
+```sh
+cp .env.testnet.example .env.testnet
+```
 
----
+Edit `.env.testnet`:
+
+```env
+STELLAR_NETWORK=testnet
+HORIZON_URL=https://horizon-testnet.stellar.org
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+ADMIN_PUBLIC_KEY=<testnet-admin public key>
+ADMIN_SECRET_KEY=<testnet-admin secret key>
+```
+
+Leave the contract ID fields empty for now — they will be populated after deployment.
+
+## 3. Build the COMEBACKHERE Contracts
+
+The Soroban smart contracts live in the `COMEBACKHERE-contracts/` directory.
+
+```sh
+cd COMEBACKHERE-contracts/
+
+# Ensure you have the WASM target
+rustup target add wasm32-unknown-unknown
+
+# Run checks
+cargo fmt --all -- --check
+cargo clippy -- -D warnings
+cargo test
+
+# Build WASM artifacts
+cargo build --target wasm32-unknown-unknown --release
+```
+
+The compiled WASM binaries are output to
+`target/wasm32-unknown-unknown/release/`. You should see:
+
+- `comebackhere_invoice.wasm`
+- `comebackhere_treasury.wasm`
+- `comebackhere_compliance.wasm`
+
+## 4. Deploy Contracts to Testnet
+
+Deploy each contract using the Stellar CLI. Replace `<WASM_PATH>` with the actual
+path to each compiled `.wasm` file.
+
+### Deploy the Invoice contract
+
+```sh
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/comebackhere_invoice.wasm \
+  --network testnet \
+  --source testnet-admin
+# Outputs: CXXXX... (INVOICE_CONTRACT_ID)
+```
+
+### Deploy the Treasury contract
+
+```sh
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/comebackhere_treasury.wasm \
+  --network testnet \
+  --source testnet-admin
+# Outputs: CXXXX... (TREASURY_CONTRACT_ID)
+```
+
+### Deploy the Compliance contract
+
+```sh
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/comebackhere_compliance.wasm \
+  --network testnet \
+  --source testnet-admin
+# Outputs: CXXXX... (COMPLIANCE_CONTRACT_ID)
+```
+
+### Update your environment
+
+Add the contract IDs to `.env.testnet`:
+
+```env
+INVOICE_CONTRACT_ID=CXXXX...
+TREASURY_CONTRACT_ID=CXXXX...
+COMPLIANCE_CONTRACT_ID=CXXXX...
+```
+
+### Alternative: use the deploy script
+
+You can also use the provided deploy script, which builds and deploys in one step:
+
+```sh
+cd ..  # back to repo root
+scripts/deploy_testnet.sh
+```
+
+The script writes deployment metadata to `abis/deployed.testnet.json` and exports
+addresses to `artifacts/addresses.json`.
+
+## 5. Initialize the Contracts
+
+After deployment, initialize each contract with the admin account and required
+configuration.
+
+### Initialize the Invoice contract
+
+```sh
+stellar contract invoke \
+  --id $INVOICE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- initialize \
+  --admin $(stellar keys address testnet-admin) \
+  --treasury $TREASURY_CONTRACT_ID \
+  --compliance $COMPLIANCE_CONTRACT_ID \
+  --usdc_token $USDC_CONTRACT_ID
+```
+
+### Initialize the Treasury contract
+
+```sh
+stellar contract invoke \
+  --id $TREASURY_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- initialize \
+  --admin $(stellar keys address testnet-admin)
+```
+
+### Initialize the Compliance contract
+
+```sh
+stellar contract invoke \
+  --id $COMPLIANCE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- initialize \
+  --admin $(stellar keys address testnet-admin)
+```
+
+### Allow the payer address in compliance
+
+```sh
+stellar contract invoke \
+  --id $COMPLIANCE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- allow_address \
+  --addr $(stellar keys address testnet-payer) \
+  --caller $(stellar keys address testnet-admin)
+```
+
+## 6. Obtain Testnet USDC
+
+On testnet, you need a USDC token contract. If the COMEBACKHERE team has deployed
+a testnet USDC mock, use that contract ID. Otherwise, deploy a simple SAC
+(Stellar Asset Contract) wrapper for a custom USDC asset:
+
+```sh
+# Create a USDC issuer
+stellar keys generate usdc-issuer --network testnet
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address usdc-issuer)"
+
+# Wrap the asset as a Soroban token
+stellar contract asset deploy \
+  --asset USDC:$(stellar keys address usdc-issuer) \
+  --network testnet \
+  --source usdc-issuer
+# Outputs: CXXXX... (USDC_CONTRACT_ID)
+```
+
+Add `USDC_CONTRACT_ID` to your `.env.testnet`.
+
+### Mint USDC to the payer
+
+Establish a trustline and send USDC to the payer account:
+
+```sh
+# Payer establishes trustline
+stellar tx new change-trust \
+  --asset USDC:$(stellar keys address usdc-issuer) \
+  --source testnet-payer \
+  --network testnet \
+  --sign \
+  --send
+
+# Issuer sends USDC to the payer
+stellar tx new payment \
+  --destination $(stellar keys address testnet-payer) \
+  --asset USDC:$(stellar keys address usdc-issuer) \
+  --amount 10000 \
+  --source usdc-issuer \
+  --network testnet \
+  --sign \
+  --send
+```
+
+## 7. Create an Invoice
+
+Use the merchant account to create an invoice:
+
+```sh
+stellar contract invoke \
+  --id $INVOICE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-merchant \
+  -- create_invoice \
+  --merchant $(stellar keys address testnet-merchant) \
+  --amount 1000000000 \
+  --memo "Test invoice #1"
+# Outputs: invoice ID (e.g. 1)
+```
+
+The amount is in stroops (1 USDC = 10,000,000 stroops), so `1000000000` = 100 USDC.
+
+### Verify the invoice
+
+```sh
+stellar contract invoke \
+  --id $INVOICE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- get_invoice \
+  --invoice_id 1
+```
+
+You should see the invoice details including status `Pending`, the merchant
+address, and the amount.
+
+## 8. Pay the Invoice with USDC
+
+The payer approves the USDC transfer and pays the invoice:
+
+```sh
+# Approve the invoice contract to spend payer's USDC
+stellar contract invoke \
+  --id $USDC_CONTRACT_ID \
+  --network testnet \
+  --source testnet-payer \
+  -- approve \
+  --from $(stellar keys address testnet-payer) \
+  --spender $INVOICE_CONTRACT_ID \
+  --amount 1000000000 \
+  --expiration_ledger 999999999
+
+# Pay the invoice
+stellar contract invoke \
+  --id $INVOICE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-payer \
+  -- mark_paid \
+  --invoice_id 1 \
+  --payer $(stellar keys address testnet-payer)
+```
+
+### Verify payment
+
+```sh
+stellar contract invoke \
+  --id $INVOICE_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- get_invoice_status \
+  --invoice_id 1
+# Should return: "Paid"
+```
+
+## 9. Execute a Settlement
+
+Once an invoice is paid, the treasury admin proposes and executes a settlement
+to release funds to the merchant.
+
+### Propose the settlement
+
+```sh
+stellar contract invoke \
+  --id $TREASURY_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- propose_settlement \
+  --invoice_id 1 \
+  --merchant $(stellar keys address testnet-merchant) \
+  --amount 1000000000 \
+  --token $USDC_CONTRACT_ID
+```
+
+### Approve the settlement
+
+If multi-sig is configured, each required signer must approve:
+
+```sh
+stellar contract invoke \
+  --id $TREASURY_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- approve_settlement \
+  --settlement_id 1
+```
+
+### Execute the settlement
+
+```sh
+stellar contract invoke \
+  --id $TREASURY_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- execute_settlement \
+  --settlement_id 1
+```
+
+### Verify the settlement
+
+Check that funds arrived in the merchant's account:
+
+```sh
+stellar contract invoke \
+  --id $USDC_CONTRACT_ID \
+  --network testnet \
+  --source testnet-admin \
+  -- balance \
+  --id $(stellar keys address testnet-merchant)
+```
+
+## 10. Using the Frontend
+
+You can also test the flow through the COMEBACKHERE frontend:
+
+```sh
+cd comebackhere-frontend/
+npm install
+npm run dev
+```
+
+1. Open the app in your browser (default: `http://localhost:5173`)
+2. Connect your wallet (Freighter extension recommended)
+3. Enter the invoice ID in the "Pay Invoice" tab
+4. Confirm payment in the wallet popup
+5. Verify the invoice status updates to "Paid"
 
 ## Troubleshooting
 
-|               Problem                |               Likely Cause                |                    Solution                    |
-|--------------------------------------|-------------------------------------------|------------------------------------------------|
-| Wallet shows "Mainnet"               | Network not switched to Testnet           | Change wallet network to Testnet               |
-| "Insufficient balance"               | No XLM or no USDC                         | Fund with Friendbot and obtain testnet USDC    |
-| "Network passphrase mismatch"        | Wallet on wrong network                   | Reconnect wallet or switch to Testnet          |
-| Transaction fails with "Not allowed" | Payer address not on compliance allowlist | Contact the protocol admin to add your address |
-| App shows "Connecting..." forever    | Browser wallet extension not installed    | Install Freighter or xBull and refresh         |
+### "Account not found" errors
 
----
+Your testnet account may have been reset. Stellar testnet is periodically wiped.
+Re-fund via Friendbot:
 
-## Network Details
+```sh
+curl "https://friendbot.stellar.org/?addr=<YOUR_PUBLIC_KEY>"
+```
 
-- **Soroban RPC**: `https://soroban-testnet.stellar.org`
-- **Horizon**: `https://horizon-testnet.stellar.org`
-- **Network Passphrase**: `Test SDF Network ; September 2025`
-- **Friendbot URL**: `https://friendbot.stellar.org`
-- **Faucet (Stellar Lab)**: <https://laboratory.stellar.org/#create-account?network=testnet>
+### Contract invocation fails with "not initialized"
+
+Make sure you ran the `initialize` step for each contract (Step 5).
+
+### USDC approval errors
+
+The token approval may have expired. Re-run the `approve` invocation with a higher
+`expiration_ledger`.
+
+### Transaction simulation fails
+
+Check that the Soroban RPC endpoint is healthy:
+
+```sh
+curl https://soroban-testnet.stellar.org/health
+```
+
+If the RPC is degraded, wait and retry. Testnet RPC can be intermittently slow.
+
+### Testnet was reset
+
+Stellar resets the testnet periodically. When this happens, all accounts and
+contracts are wiped. You must re-run the full flow from Step 1.

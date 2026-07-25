@@ -1,0 +1,125 @@
+name: CI - Contract Coverage
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  COVERAGE_THRESHOLD: 70
+
+jobs:
+  coverage:
+    name: contract coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: COMEBACKHERE-contracts
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: WHEELBACK/COMEBACKHERE-contracts
+          ref: main
+          path: COMEBACKHERE-contracts
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            COMEBACKHERE-contracts/target
+          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('COMEBACKHERE-contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-cov-
+
+      - name: Run coverage
+        run: |
+          cargo llvm-cov \
+            --workspace \
+            --lcov --output-path ../lcov.info
+          cargo llvm-cov \
+            --workspace \
+            --html --output-dir ../coverage-html
+
+      - name: Extract coverage percentage
+        id: cov
+        run: |
+          PCT=$(cargo llvm-cov --workspace --summary-only 2>/dev/null \
+            | grep -oP 'TOTAL.*?\K[0-9]+\.[0-9]+(?=%)' | tail -1 || echo "0")
+          echo "pct=$PCT" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce minimum threshold
+        run: |
+          PCT="${{ steps.cov.outputs.pct }}"
+          THRESHOLD="${{ env.COVERAGE_THRESHOLD }}"
+          echo "Coverage: ${PCT}% (minimum: ${THRESHOLD}%)"
+          awk -v p="$PCT" -v t="$THRESHOLD" \
+            'BEGIN { if (p+0 < t+0) { print "FAIL: coverage below threshold"; exit 1 } }'
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            lcov.info
+            coverage-html/
+
+      - name: Post coverage comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pct = '${{ steps.cov.outputs.pct }}';
+            const threshold = '${{ env.COVERAGE_THRESHOLD }}';
+            const passing = parseFloat(pct) >= parseFloat(threshold);
+            const icon = passing ? '✅' : '❌';
+            const body = [
+              '## ' + icon + ' Contract Coverage Report',
+              '',
+              `| Metric | Value |`,
+              `|--------|-------|`,
+              `| Line coverage | **${pct}%** |`,
+              `| Minimum threshold | ${threshold}% |`,
+              `| Status | ${passing ? 'Passing' : 'Below threshold'} |`,
+              '',
+              '_Coverage artifacts are available in the [Actions run](' +
+                `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) under **coverage-report**._`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('Contract Coverage Report')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

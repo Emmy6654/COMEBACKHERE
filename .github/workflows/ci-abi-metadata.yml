@@ -1,0 +1,52 @@
+name: CI - ABI Metadata
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'COMEBACKHERE-contracts/contracts/**'
+
+permissions:
+  contents: read
+
+jobs:
+  generate-abi-metadata:
+    name: generate-and-verify-abi-metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: WHEELBACK/COMEBACKHERE-contracts
+          ref: main
+          path: COMEBACKHERE-contracts
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            COMEBACKHERE-contracts/target
+          key: ${{ runner.os }}-cargo-abi-meta-${{ hashFiles('COMEBACKHERE-contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-abi-meta-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate ABI metadata
+        run: bash scripts/generate_abi_metadata.sh abis
+
+      - name: Fail if ABI snapshots are stale
+        run: |
+          if ! git diff --exit-code abis/; then
+            echo ""
+            echo "ERROR: ABI snapshots in abis/ are out of date."
+            echo "Run 'make update-abi-snapshots' locally and commit the updated files."
+            exit 1
+          fi

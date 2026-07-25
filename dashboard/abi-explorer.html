@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABI Explorer — COMEBACKHERE Protocol</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .contract-section { margin-bottom: 24px; }
+  .contract-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    cursor: pointer;
+    user-select: none;
+  }
+  .contract-header:hover { background: #f9fafb; }
+  .contract-header h2 { font-size: 1rem; font-weight: 700; flex: 1; margin: 0; }
+  .contract-header .version { font-size: 0.75rem; color: #6b7280; }
+  .contract-header .chevron { font-size: 0.75rem; color: #6b7280; transition: transform 0.2s; }
+  .contract-header.open .chevron { transform: rotate(90deg); }
+  .fn-list {
+    display: none;
+    background: #fff;
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-top: 1px solid #e5e7eb;
+    overflow: hidden;
+  }
+  .fn-list.open { display: block; }
+  .fn-row {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 10px 20px;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 0.875rem;
+  }
+  .fn-row:last-child { border-bottom: none; }
+  .fn-row:hover { background: #f9fafb; }
+  .fn-name { font-family: monospace; font-weight: 600; min-width: 220px; color: #4f46e5; }
+  .fn-params { color: #374151; flex: 1; font-family: monospace; font-size: 0.8rem; }
+  .fn-returns { font-family: monospace; font-size: 0.8rem; color: #065f46; white-space: nowrap; }
+  .fn-returns::before { content: "→ "; color: #9ca3af; }
+  .empty-params { color: #9ca3af; font-style: italic; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ABI Explorer</h1>
+      <p style="color:#6b7280;font-size:0.875rem;margin-top:4px">
+        Read-only reference for deployed COMEBACKHERE Protocol contracts.
+      </p>
+    </header>
+    <div id="explorer"></div>
+  </div>
+
+  <script>
+    const ABIS = [
+      {
+        "contract": "invoice",
+        "version": "1.1.0",
+        "functions": [
+          "initialize",
+          "create_invoice",
+          "mark_paid",
+          "get_invoice",
+          "get_invoice_status",
+          "cancel_invoice",
+          "request_refund",
+          "batch_expire(offset: u32, limit: u32, returns: u32)",
+          "pause",
+          "unpause",
+          "set_grace_window",
+          "get_grace_window",
+          "release_escrow"
+        ]
+      },
+      {
+        "contract": "treasury",
+        "version": "1.0.0",
+        "functions": [
+          "initialize",
+          "set_signer",
+          "propose_settlement",
+          "propose_partial_settlement",
+          "approve_settlement",
+          "approve_partial_settlement",
+          "execute_settlement",
+          "partially_execute_settlement",
+          "cancel_settlement",
+          "get_pending_settlements(offset: Option<u32>, limit: Option<u32>, returns: Vec<u64>)",
+          "get_pending_settlements_page",
+          "get_settlement",
+          "update_threshold",
+          "pause",
+          "unpause",
+          "raise_dispute",
+          "resolve_dispute",
+          "vote_dispute_resolution",
+          "deposit",
+          "withdraw",
+          "add_allowed_token",
+          "remove_allowed_token",
+          "get_allowed_tokens",
+          "propose_signer_rotation",
+          "approve_signer_rotation",
+          "update_merchant_payout_address",
+          "get_merchant_payout_address",
+          "hold_settlement",
+          "release_hold"
+        ]
+      },
+      {
+        "contract": "compliance",
+        "version": "1.0.0",
+        "functions": [
+          "initialize",
+          "is_allowed",
+          "allow_address",
+          "block_address",
+          "allow_address_until",
+          "transfer_admin",
+          "accept_admin",
+          "clear_address",
+          "pause",
+          "unpause"
+        ]
+      }
+    ];
+
+    // Parse "name(param: type, ..., returns: type)" into { name, params, returns }
+    function parseFn(raw) {
+      const parenOpen = raw.indexOf('(');
+      if (parenOpen === -1) return { name: raw.trim(), params: [], returns: null };
+
+      const name = raw.slice(0, parenOpen).trim();
+      const inner = raw.slice(parenOpen + 1, raw.lastIndexOf(')')).trim();
+      const parts = inner.split(',').map(s => s.trim()).filter(Boolean);
+
+      let returns = null;
+      const params = [];
+      for (const p of parts) {
+        if (p.startsWith('returns:')) {
+          returns = p.replace('returns:', '').trim();
+        } else {
+          params.push(p);
+        }
+      }
+      return { name, params, returns };
+    }
+
+    function renderContract(abi) {
+      const id = 'contract-' + abi.contract;
+      const fnRows = abi.functions.map(raw => {
+        const { name, params, returns } = parseFn(raw);
+        const paramsHtml = params.length
+          ? params.map(p => `<span>${p}</span>`).join('<span style="color:#9ca3af">, </span>')
+          : '<span class="empty-params">no params</span>';
+        const returnsHtml = returns
+          ? `<span class="fn-returns">${returns}</span>`
+          : '';
+        return `<div class="fn-row">
+          <span class="fn-name">${name}</span>
+          <span class="fn-params">${paramsHtml}</span>
+          ${returnsHtml}
+        </div>`;
+      }).join('');
+
+      return `<div class="contract-section">
+        <div class="contract-header" data-target="${id}" onclick="toggleSection(this)">
+          <h2>${abi.contract}</h2>
+          <span class="version">v${abi.version}</span>
+          <span class="badge" style="background:#e0e7ff;color:#3730a3">${abi.functions.length} functions</span>
+          <span class="chevron">▶</span>
+        </div>
+        <div class="fn-list" id="${id}">${fnRows}</div>
+      </div>`;
+    }
+
+    function toggleSection(header) {
+      const target = document.getElementById(header.dataset.target);
+      header.classList.toggle('open');
+      target.classList.toggle('open');
+    }
+
+    document.getElementById('explorer').innerHTML = ABIS.map(renderContract).join('');
+  </script>
+</body>
+</html>

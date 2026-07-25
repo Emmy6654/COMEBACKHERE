@@ -1,0 +1,9 @@
+# CODEOWNERS — critical paths require review from designated owners before merge.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+contracts/  @dreamgeneX
+scripts/    @dreamgeneX
+docs/       @dreamgeneX
+
+# Frontend — assign a frontend team owner when one is established.
+# comebackhere-frontend/  @frontend-team

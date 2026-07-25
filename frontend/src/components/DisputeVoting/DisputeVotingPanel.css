@@ -1,0 +1,155 @@
+.dispute-panel {
+  max-width: 720px;
+}
+
+.dispute-panel__title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--color-text);
+}
+
+.dispute-panel__section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dispute-panel__error {
+  color: var(--color-danger);
+}
+
+.dispute-card {
+  background: var(--color-card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dispute-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dispute-card__id {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.dispute-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dispute-card__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dispute-card__votes {
+  display: flex;
+  gap: 32px;
+}
+
+.dispute-card__vote-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dispute-card__actions {
+  display: flex;
+  gap: 10px;
+}
+
+.dispute-card__voted {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.dispute-card__error {
+  font-size: 0.85rem;
+  color: var(--color-danger);
+}
+
+.vote-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.vote-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vote-btn--claimant {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.vote-btn--counterparty {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.outcome-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.outcome-badge--claimant {
+  background: var(--color-success-soft-bg);
+  color: var(--color-success-soft-text);
+}
+
+.outcome-badge--counterparty {
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger-soft-text);
+}
+
+.resolution-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.resolution-bar {
+  width: 120px;
+  height: 8px;
+  background: var(--color-progress-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.resolution-bar__fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.resolution-bar__label {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}

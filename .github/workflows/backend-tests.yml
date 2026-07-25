@@ -1,0 +1,71 @@
+name: Backend Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-
+
+      - uses: actions/cache@v4
+        with:
+          path: contracts/target
+          key: cargo-target-${{ hashFiles('**/Cargo.lock') }}-${{ runner.os }}
+          restore-keys: cargo-target-
+
+      - name: Run unit tests
+        run: cargo test -p comebackhere-invoice
+        working-directory: contracts
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Soroban sandbox
+        run: docker compose up -d soroban
+        timeout-minutes: 2
+
+      - name: Wait for sandbox health
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8000/health && break
+            echo "waiting for sandbox... ($i/20)"
+            sleep 3
+          done
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-
+
+      - uses: actions/cache@v4
+        with:
+          path: contracts/target
+          key: cargo-target-${{ hashFiles('**/Cargo.lock') }}-${{ runner.os }}
+          restore-keys: cargo-target-
+
+      - name: Run API integration tests
+        run: cargo test -p api-integration-tests -- --test-threads=1
+        working-directory: contracts

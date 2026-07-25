@@ -1,0 +1,51 @@
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.skeleton {
+  background: var(--color-border);
+  border-radius: var(--radius);
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* Settlement list skeleton */
+.skeleton-settlement-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-card-bg, #fff);
+}
+
+.skeleton-settlement-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.skeleton-settlement-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Dashboard stats skeleton */
+.skeleton-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.skeleton-stats-card {
+  background: var(--color-card-bg, #fff);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  box-shadow: var(--shadow);
+  border-left: 4px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

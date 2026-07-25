@@ -1,0 +1,287 @@
+.settlement-detail {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  font-family: system-ui, sans-serif;
+}
+
+.settlement-detail__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.settlement-detail__header h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.settlement-detail__status {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settlement-detail__status--pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.settlement-detail__status--executed {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.settlement-detail__status--onhold {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.settlement-detail__status--cancelled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.settlement-detail__status--partiallyexecuted {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.settlement-detail__info {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.settlement-detail__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.settlement-detail__row:last-child {
+  border-bottom: none;
+}
+
+.settlement-detail__label {
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.settlement-detail__value {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #111827;
+}
+
+.settlement-detail__progress-section {
+  margin-bottom: 1.5rem;
+}
+
+.settlement-detail__progress-section h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.settlement-detail__progress-visuals {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+@media (max-width: 600px) {
+  .settlement-detail__progress-visuals {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+.settlement-detail__progress-details {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Ring */
+.approval-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.approval-ring__svg {
+  width: 128px;
+  height: 128px;
+  transform: rotate(-90deg);
+}
+
+.approval-ring__bg {
+  fill: none;
+  stroke: #e5e7eb;
+}
+
+.approval-ring__fill {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.approval-ring__label {
+  margin-top: -80px;
+  position: relative;
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 48px;
+}
+
+.approval-ring__separator {
+  color: #9ca3af;
+  margin: 0 2px;
+}
+
+.approval-ring__total {
+  color: #6b7280;
+}
+
+.approval-ring__status {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin: 4px 0 0;
+}
+
+/* Progress bar */
+.approval-progress-bar {
+  margin-bottom: 1rem;
+}
+
+.approval-progress-bar__track {
+  position: relative;
+  height: 12px;
+  background: #e5e7eb;
+  border-radius: 6px;
+  overflow: visible;
+}
+
+.approval-progress-bar__fill {
+  height: 100%;
+  border-radius: 6px;
+  position: relative;
+  z-index: 1;
+}
+
+.approval-progress-bar__marker {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 16px;
+  background: #9ca3af;
+  transform: translateX(-1px);
+  z-index: 2;
+}
+
+.approval-progress-bar__labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.approval-progress-bar__pct {
+  font-weight: 600;
+  color: #374151;
+}
+
+/* Signer list */
+.signer-approval-list__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: #374151;
+}
+
+.signer-approval-list__items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.signer-approval-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 0.8125rem;
+}
+
+.signer-approval-item--approved {
+  background: #f0fdf4;
+}
+
+.signer-approval-item--pending {
+  background: #f9fafb;
+}
+
+.signer-approval-item__icon {
+  font-weight: 700;
+  width: 20px;
+  text-align: center;
+}
+
+.signer-approval-item--approved .signer-approval-item__icon {
+  color: #22c55e;
+}
+
+.signer-approval-item--pending .signer-approval-item__icon {
+  color: #9ca3af;
+}
+
+.signer-approval-item__address {
+  font-family: monospace;
+  color: #374151;
+}
+
+.signer-approval-item__weight {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-left: auto;
+}
+
+.signer-approval-item__badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.signer-approval-item__badge--approved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.signer-approval-item__badge--pending {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+/* Hold reason */
+.settlement-detail__hold-reason {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: #991b1b;
+}

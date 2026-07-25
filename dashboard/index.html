@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Status Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Invoice Status Dashboard</h1>
+      <div class="controls">
+        <input type="text" id="search" placeholder="Search by ID, merchant, or customer...">
+        <select id="statusFilter">
+          <option value="">All Statuses</option>
+          <option value="Pending">Pending</option>
+          <option value="Paid">Paid</option>
+          <option value="Expired">Expired</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="RefundRequested">Refund Requested</option>
+          <option value="Released">Released</option>
+        </select>
+        <button id="refreshBtn">Refresh</button>
+      </div>
+    </header>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="table-wrapper">
+      <table id="invoiceTable">
+        <thead>
+          <tr>
+            <th data-sort="id">ID</th>
+            <th data-sort="merchant">Merchant</th>
+            <th data-sort="customer">Customer</th>
+            <th data-sort="amount">Amount</th>
+            <th data-sort="status">Status</th>
+            <th data-sort="created_at">Created</th>
+            <th data-sort="expires_at">Expires</th>
+          </tr>
+        </thead>
+        <tbody id="invoiceBody"></tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <h3>Status Legend</h3>
+      <div class="legend-items">
+        <span class="badge badge-pending">Pending</span>
+        <span class="badge badge-paid">Paid</span>
+        <span class="badge badge-expired">Expired</span>
+        <span class="badge badge-cancelled">Cancelled</span>
+        <span class="badge badge-refund">Refund Requested</span>
+        <span class="badge badge-released">Released</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

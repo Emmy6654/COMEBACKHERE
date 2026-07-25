@@ -1,0 +1,124 @@
+name: CI - Post-Deployment Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Target network (testnet)"
+        required: true
+        default: "testnet"
+      invoice_contract_id:
+        description: "Deployed invoice contract ID (C…)"
+        required: true
+      treasury_contract_id:
+        description: "Deployed treasury contract ID (C…)"
+        required: true
+      compliance_contract_id:
+        description: "Deployed compliance contract ID (C…)"
+        required: true
+
+jobs:
+  deploy-testnet:
+    name: deploy (testnet)
+    runs-on: ubuntu-latest
+    # Only runs on manual dispatch or if wired into a release workflow.
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: WHEELBACK/COMEBACKHERE-contracts
+          ref: main
+          path: COMEBACKHERE-contracts
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            COMEBACKHERE-contracts/target
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('COMEBACKHERE-contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deploy-
+
+      - name: Build WASM artifacts
+        run: cargo build --target wasm32-unknown-unknown --release
+        working-directory: COMEBACKHERE-contracts
+
+      - name: Run deploy_testnet.sh
+        env:
+          STELLAR_NETWORK: ${{ github.event.inputs.network }}
+          SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          SOROBAN_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          ADMIN_PUBLIC_KEY: ${{ secrets.TESTNET_ADMIN_PUBLIC_KEY }}
+          ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
+          INVOICE_CONTRACT_ID: ${{ github.event.inputs.invoice_contract_id }}
+          TREASURY_CONTRACT_ID: ${{ github.event.inputs.treasury_contract_id }}
+          COMPLIANCE_CONTRACT_ID: ${{ github.event.inputs.compliance_contract_id }}
+        run: ./scripts/deploy_testnet.sh
+
+  verify:
+    name: post-deploy WASM hash verification
+    runs-on: ubuntu-latest
+    needs: deploy-testnet
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: WHEELBACK/COMEBACKHERE-contracts
+          ref: main
+          path: COMEBACKHERE-contracts
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            COMEBACKHERE-contracts/target
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('COMEBACKHERE-contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deploy-
+
+      - name: Build WASM artifacts (for hash comparison)
+        run: cargo build --target wasm32-unknown-unknown --release
+        working-directory: COMEBACKHERE-contracts
+
+      - name: Run verify.sh
+        env:
+          SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          STELLAR_NETWORK: ${{ github.event.inputs.network }}
+          INVOICE_CONTRACT_ID: ${{ github.event.inputs.invoice_contract_id }}
+          TREASURY_CONTRACT_ID: ${{ github.event.inputs.treasury_contract_id }}
+          COMPLIANCE_CONTRACT_ID: ${{ github.event.inputs.compliance_contract_id }}
+          CONTRACTS_DIR: COMEBACKHERE-contracts/target/wasm32-unknown-unknown/release
+        run: ./scripts/verify.sh
+
+  export-addresses:
+    name: export and validate deployed addresses
+    runs-on: ubuntu-latest
+    needs: verify
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run export_deployed_addresses.sh
+        env:
+          STELLAR_NETWORK: ${{ github.event.inputs.network }}
+          INVOICE_CONTRACT_ID: ${{ github.event.inputs.invoice_contract_id }}
+          TREASURY_CONTRACT_ID: ${{ github.event.inputs.treasury_contract_id }}
+          COMPLIANCE_CONTRACT_ID: ${{ github.event.inputs.compliance_contract_id }}
+        run: ./scripts/export_deployed_addresses.sh
+
+      - name: Upload addresses artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployed-addresses-${{ github.event.inputs.network }}
+          path: artifacts/addresses.json

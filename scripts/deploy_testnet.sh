@@ -4,18 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Guard: check for required environment variables
-if [ -z "${SOROBAN_RPC_URL:-}" ] && [ ! -f .env.testnet ]; then
-  echo "Error: SOROBAN_RPC_URL is not set and .env.testnet not found"
-  echo "Set SOROBAN_RPC_URL or create .env.testnet with required variables"
-  exit 1
-fi
-
-if [ -z "${SOROBAN_NETWORK_PASSPHRASE:-}" ] && [ ! -f .env.testnet ]; then
-  echo "Error: SOROBAN_NETWORK_PASSPHRASE is not set and .env.testnet not found"
-  echo "Required variables: SOROBAN_RPC_URL, SOROBAN_NETWORK_PASSPHRASE"
-  exit 1
-fi
+# shellcheck disable=SC1091
+source scripts/validate_env.sh .env.testnet testnet deployment
 
 mkdir -p abis
 

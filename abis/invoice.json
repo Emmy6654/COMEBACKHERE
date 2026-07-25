@@ -1,20 +1,29 @@
 {
   "contract": "invoice",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "functions": [
     "initialize",
     "create_invoice",
-    "mark_paids",
+    "mark_paid",
     "get_invoice",
     "get_invoice_status",
-    "cancel_invoiced",
+    "cancel_invoice",
     "request_refund",
-    "batch_expire",
+    "batch_expire(offset: u32, limit: u32, returns: u32)",
     "pause",
     "unpause",
     "set_grace_window",
     "get_grace_window",
     "release_escrow"
   ],
-  "events": ["invoice_created", "invoice_paid", "invoice_expired", "invoice_cancelled", "invoice_refund_req", "escrow_released", "contract_paused", "contract_unpaused"]
+  "events": [
+    "invoice_created",
+    "invoice_paid",
+    "invoice_expired",
+    "invoice_cancelled",
+    "invoice_refund_req",
+    "escrow_released",
+    "contract_paused",
+    "contract_unpaused"
+  ]
 }

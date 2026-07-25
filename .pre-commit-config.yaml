@@ -1,4 +1,14 @@
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        files: ^(COMEBACKHERE-contracts/contracts/|scripts/|docs/|frontend/)
+      - id: end-of-file-fixer
+        files: ^(COMEBACKHERE-contracts/contracts/|scripts/|docs/|frontend/)
+      - id: check-json
+        files: ^(COMEBACKHERE-contracts/contracts/|scripts/|docs/|frontend/)
   - repo: local
     hooks:
       - id: abi-snapshot-hygiene

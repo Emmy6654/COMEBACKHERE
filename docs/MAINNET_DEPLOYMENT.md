@@ -64,3 +64,203 @@ Set these via environment variables or in a `.env.mainnet` file. Scripts will fa
 - Soroban RPC health degraded across all configured endpoints
 - Compliance contract initialization fails or `is_allowed` returns unexpected results for the initial allowlist
 - Any failed low-value payment smoke test
+
+---
+
+## Multi-Sig Governance Model
+
+All mainnet contract deployments and administrative operations require approval
+from multiple authorized signers. No single individual can unilaterally deploy,
+upgrade, or modify mainnet contracts.
+
+### Signer Roles
+
+| Role | Count | Responsibility |
+| ------ | ------- | ---------------- |
+| **Lead Deployer** | 1 | Prepares the deployment issue, builds release artifacts, submits the deployment transaction after all approvals are collected. Does NOT hold sole signing authority. |
+| **Security Reviewer** | 1–2 | Reviews the target commit for security vulnerabilities, verifies WASM hashes match the audited source, and signs off on the security checklist. |
+| **Treasury Signer** | 2+ | Holds custody of treasury signing keys. Must independently verify artifact hashes before co-signing the deployment transaction. |
+| **Compliance Officer** | 1 | Confirms that the deployment meets regulatory requirements, verifies that the compliance contract configuration is correct, and signs the compliance attestation. |
+| **Ceremony Witness** | 1 | Observes the signing ceremony, records the audit log, and confirms that all procedural steps were followed. Does not hold a signing key. |
+
+### Signing Threshold
+
+The treasury contract enforces an on-chain multi-sig threshold. A deployment
+transaction requires signatures meeting or exceeding the configured threshold
+weight. The default configuration is:
+
+- **Threshold**: 3 of 5 signers (by weight)
+- **Each signer weight**: 1 (equal weight, adjustable via `update_threshold`)
+- **Minimum signers for quorum**: 3
+
+The threshold can only be changed through a signed `update_threshold` transaction
+that itself meets the current threshold.
+
+### Key Custody Requirements
+
+1. **Hardware wallets required** — All mainnet signing keys MUST be stored on
+   hardware wallets (Ledger Nano S/X or equivalent). Software-only keys are
+   not permitted for mainnet operations.
+
+2. **Geographic distribution** — Signing keys must be held by individuals in at
+   least two distinct geographic locations to mitigate single-site risk.
+
+3. **No shared custody** — Each signer holds exactly one key. No key may be
+   shared between individuals or stored in a shared location (e.g., shared
+   password manager vault).
+
+4. **Backup and recovery** — Each signer must maintain a secure offline backup
+   of their recovery seed phrase, stored separately from the hardware wallet
+   itself. Recovery procedures must be tested at least once before participating
+   in a mainnet ceremony.
+
+5. **Key rotation schedule** — Signing keys should be rotated every 12 months
+   or immediately upon any suspected compromise. Use the
+   `propose_signer_rotation` and `approve_signer_rotation` contract functions
+   to execute rotations on-chain.
+
+6. **Revocation** — If a signer is compromised or departs the organization,
+   their key must be removed via a signed `set_signer` transaction within 24
+   hours. The remaining signers must meet quorum to execute this.
+
+---
+
+## Mainnet Signing Ceremony Checklist
+
+The signing ceremony is a structured process that ensures every mainnet
+deployment is safe, auditable, and authorized by the required signers.
+
+### Pre-Ceremony (Lead Deployer, 24–48 hours before)
+
+- [ ] Open a GitHub deployment issue using the deployment issue template
+- [ ] Include the target commit SHA from `COMEBACKHERE-contracts/`
+- [ ] Build WASM artifacts from a clean checkout of the target commit:
+
+  ```sh
+  git clone --branch <TAG> --depth 1 <REPO_URL>
+  cd COMEBACKHERE-contracts/
+  cargo build --target wasm32-unknown-unknown --release
+  ```
+
+- [ ] Compute and record SHA-256 hashes of all WASM artifacts:
+
+  ```sh
+  sha256sum target/wasm32-unknown-unknown/release/comebackhere_*.wasm
+  ```
+
+- [ ] Post the hashes in the deployment issue
+- [ ] List the expected admin, treasury, and compliance public keys
+- [ ] Tag all required signers for review
+- [ ] Confirm Soroban mainnet RPC health:
+
+  ```sh
+  curl https://soroban-mainnet.stellar.org/health
+  ```
+
+### Security Review (Security Reviewer, before ceremony)
+
+- [ ] Pull the exact commit SHA from the deployment issue
+- [ ] Run static analysis and linting:
+
+  ```sh
+  cargo fmt --all -- --check
+  cargo clippy -- -D warnings
+  ```
+
+- [ ] Run the full test suite:
+
+  ```sh
+  cargo test
+  ```
+
+- [ ] Review all contract changes since the last mainnet deployment
+- [ ] Verify no new dependencies were introduced without review
+- [ ] Independently build WASM artifacts and confirm hashes match the
+      deployment issue
+- [ ] Sign off on the deployment issue with a security approval comment
+
+### Compliance Review (Compliance Officer, before ceremony)
+
+- [ ] Verify that the compliance contract configuration matches the
+      approved address allowlist
+- [ ] Confirm no regulatory-sensitive changes were introduced
+- [ ] Sign the compliance attestation in the deployment issue
+
+### Ceremony Execution (All signers, synchronous)
+
+All signers must be present (in-person or via authenticated video call) for the
+ceremony. The Ceremony Witness records each step.
+
+1. **Roll call** — Confirm identity of all participating signers. Record
+   attendance in the ceremony log.
+
+2. **Artifact verification** — Each signer independently verifies:
+   - The deployment issue commit SHA matches the checked-out source
+   - WASM hashes match the deployment issue
+   - The security review and compliance attestation are present
+
+3. **Environment confirmation** — The Lead Deployer confirms:
+   - `SOROBAN_RPC_URL` points to mainnet (`https://soroban-mainnet.stellar.org`)
+   - `SOROBAN_NETWORK_PASSPHRASE` is set to the mainnet passphrase
+   - All required environment variables are set and verified
+
+4. **Transaction construction** — The Lead Deployer constructs the deployment
+   transaction(s) without submitting:
+
+   ```sh
+   stellar contract deploy \
+     --wasm <WASM_PATH> \
+     --network mainnet \
+     --source <ADMIN_KEY> \
+     --build-only
+   ```
+
+5. **Multi-sig collection** — Each Treasury Signer reviews the unsigned
+   transaction and signs with their hardware wallet:
+   - Verify the transaction destination, contract hash, and parameters
+   - Sign using the hardware wallet
+   - Pass the partial signature to the Lead Deployer
+
+6. **Threshold verification** — The Lead Deployer confirms the collected
+   signatures meet the on-chain threshold before submission.
+
+7. **Submission** — The Lead Deployer submits the fully signed transaction to
+   the Soroban RPC endpoint.
+
+8. **Confirmation** — Wait for transaction confirmation. Record:
+   - Transaction hash(es)
+   - Deployed contract ID(s)
+   - Ledger sequence number
+
+9. **Post-deployment verification** — Run the following checks:
+   - `GET /health/rpc` on the backend returns healthy
+   - A low-value end-to-end invoice payment smoke test succeeds
+   - Contract state queries return expected initial values
+
+10. **Secret rotation** — Update backend production secrets with the new
+    contract IDs:
+    - `INVOICE_CONTRACT_ID`
+    - `TREASURY_CONTRACT_ID`
+    - `COMPLIANCE_CONTRACT_ID`
+
+11. **Ceremony close** — The Ceremony Witness:
+    - Records all transaction hashes in the deployment issue
+    - Confirms all checklist items are complete
+    - Closes the deployment issue with a summary comment
+
+### Post-Ceremony (Lead Deployer, within 24 hours)
+
+- [ ] Update `abis/` with the new contract metadata
+- [ ] Open a PR to update ABI snapshots and any configuration references
+- [ ] Notify the team in the designated channel that mainnet deployment is live
+- [ ] Archive the ceremony recording (if video call) per retention policy
+
+### Emergency Rollback
+
+If a critical issue is discovered after deployment:
+
+1. The Lead Deployer opens an emergency deployment issue
+2. If the contracts support pause: execute `pause` via multi-sig to halt
+   operations immediately
+3. Follow the standard ceremony process for any corrective deployment
+4. Document the incident in a post-mortem within 48 hours
