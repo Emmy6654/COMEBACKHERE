@@ -23,10 +23,12 @@ docker-compose up -d
 ```
 
 This starts:
+
 - **Soroban Node**: Stellar quickstart (Horizon at `http://localhost:8000`)
 - **Redis**: Event consumer backing service (port 6379)
 
 Check service health:
+
 ```sh
 docker-compose ps
 curl http://localhost:8000/health
