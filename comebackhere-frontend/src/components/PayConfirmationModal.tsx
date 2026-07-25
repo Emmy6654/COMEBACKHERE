@@ -16,8 +16,19 @@ export function PayConfirmationModal({
   submitting,
 }: PayConfirmationModalProps) {
   return (
-    <div className="modal-overlay" onClick={onCancel} role="presentation">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="pay-confirm-title">
+    <div 
+      className="modal-overlay" 
+      onClick={onCancel} 
+      role="presentation"
+      aria-hidden={submitting ? "true" : "false"}
+    >
+      <div 
+        className="modal" 
+        onClick={(e) => e.stopPropagation()} 
+        role="dialog" 
+        aria-modal="true" 
+        aria-labelledby="pay-confirm-title"
+      >
         <h2 id="pay-confirm-title">Confirm Payment</h2>
         <p className="modal-desc">
           You are about to pay this invoice. Please review the details before
@@ -59,8 +70,16 @@ export function PayConfirmationModal({
             onClick={onConfirm}
             disabled={submitting}
             aria-label={submitting ? "Submitting payment" : "Confirm payment"}
+            aria-busy={submitting}
           >
-            {submitting ? "Submitting..." : "Confirm Payment"}
+            {submitting ? (
+              <>
+                <span className="spinner" aria-hidden="true"></span>
+                Submitting...
+              </>
+            ) : (
+              "Confirm Payment"
+            )}
           </button>
         </div>
       </div>
