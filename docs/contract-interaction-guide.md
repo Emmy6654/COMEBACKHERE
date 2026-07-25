@@ -225,6 +225,85 @@ curl -X POST http://localhost:3000/api/treasury/execute-settlement \
 
 ---
 
+
+### Place a settlement on hold
+
+Calls `hold_settlement` on the treasury contract, preventing execution until
+explicitly released or escalated.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \\
+  --id $TREASURY_CONTRACT \\
+  --source $SECRET_KEY \\
+  --rpc-url $RPC_URL \\
+  --network-passphrase "$NETWORK_PASSPHRASE" \\
+  -- hold_settlement \\
+  --signer $SOURCE_ACCOUNT \\
+  --settlement_id 7 \\
+  --reason "Awaiting KYC confirmation"
+```
+
+---
+
+### Release a hold
+
+Calls `release_hold` on the treasury contract, returning the settlement to `Pending`
+so the normal approval and execution flow can resume.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \\
+  --id $TREASURY_CONTRACT \\
+  --source $SECRET_KEY \\
+  --rpc-url $RPC_URL \\
+  --network-passphrase "$NETWORK_PASSPHRASE" \\
+  -- release_hold \\
+  --signer $SOURCE_ACCOUNT \\
+  --settlement_id 7
+```
+
+#### API
+
+```sh
+curl -X POST http://localhost:3000/api/treasury/release-hold \\
+  -H "Content-Type: application/json" \\
+  -d '{ "settlement_id": 7 }'
+```
+
+---
+
+### Raise a dispute (escalate hold)
+
+Calls `raise_dispute` on the treasury contract, escalating the hold to the
+governance dispute-resolution flow and beginning a multi-sig vote.
+
+#### soroban-cli
+
+```sh
+soroban contract invoke \\
+  --id $TREASURY_CONTRACT \\
+  --source $SECRET_KEY \\
+  --rpc-url $RPC_URL \\
+  --network-passphrase "$NETWORK_PASSPHRASE" \\
+  -- raise_dispute \\
+  --signer $SOURCE_ACCOUNT \\
+  --settlement_id 7 \\
+  --reason "Merchant disputes the invoice amount"
+```
+
+#### API
+
+```sh
+curl -X POST http://localhost:3000/api/treasury/escalate-hold \\
+  -H "Content-Type: application/json" \\
+  -d '{ "settlement_id": 7, "reason": "Merchant disputes the invoice amount" }'
+```
+
+---
+
 ### Get / set approval threshold
 
 #### soroban-cli — read

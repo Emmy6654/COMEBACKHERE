@@ -106,12 +106,50 @@ INVOICE_CONTRACT_ID=$INVOICE_CONTRACT_ID
 TREASURY_CONTRACT_ID=$TREASURY_CONTRACT_ID
 COMPLIANCE_CONTRACT_ID=$COMPLIANCE_CONTRACT_ID
 USDC_CONTRACT_ID=CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+MONGO_URI=mongodb://localhost:27017/comebackhere
+REDIS_URL=redis://localhost:6379
+WEBHOOK_SECRET=<generate-a-32-char-or-longer-secret>
 EOF
+```
 
+Before starting the backend, validate all required environment variables:
+
+```sh
+cd ../COMEBACKHERE
+scripts/validate_backend_env.sh ../comebackhere-backend/.env
+```
+
+A missing or blank required variable causes the script to exit with a clear error message.
+To also enforce the optional contract ID variables (e.g. in CI), run with `STRICT=1`:
+
+```sh
+STRICT=1 scripts/validate_backend_env.sh ../comebackhere-backend/.env
+```
+
+Then start the backend:
+
+```sh
+cd ../comebackhere-backend
 cargo build && cargo run
 ```
 
 Backend listens on `http://localhost:3000`.
+
+#### Required backend variables
+
+| Variable         | Description                                                        |
+|------------------|--------------------------------------------------------------------|
+| `MONGO_URI`      | MongoDB connection string (`mongodb://` or `mongodb+srv://`)       |
+| `REDIS_URL`      | Redis connection string (`redis://`)                               |
+| `WEBHOOK_SECRET` | HMAC secret for signing outgoing webhook payloads (≥ 32 chars)     |
+
+#### Optional contract integration variables
+
+| Variable                | Description                             |
+|-------------------------|-----------------------------------------|
+| `INVOICE_CONTRACT_ID`   | Deployed invoice contract address       |
+| `TREASURY_CONTRACT_ID`  | Deployed treasury contract address      |
+| `COMPLIANCE_CONTRACT_ID`| Deployed compliance contract address    |
 
 ### Frontend
 
