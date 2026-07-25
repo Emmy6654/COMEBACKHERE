@@ -1,9 +1,18 @@
 # CODEOWNERS — critical paths require review from designated owners before merge.
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-contracts/  @dreamgeneX
-scripts/    @dreamgeneX
-docs/       @dreamgeneX
+# Smart-contract code — fund-safety-critical; review must go through the
+# contract maintainer before any change ships.
+contracts/             @dreamgeneX
+COMEBACKHERE-contracts/ @dreamgeneX
+
+# ABI metadata generated from contract sources; any change must be
+# reviewed alongside the contract source that produced it.
+abis/                  @dreamgeneX
+
+# Tooling, scripts, and process docs.
+scripts/               @dreamgeneX
+docs/                  @dreamgeneX
 
 # Frontend — assign a frontend team owner when one is established.
 # comebackhere-frontend/  @frontend-team
