@@ -7,11 +7,14 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
   <div class="container">
     <header>
       <h1>Invoice Status Dashboard</h1>
-      <div class="controls">
+      <div class="controls" role="search" aria-label="Filter invoices">
+        <label for="search" class="sr-only">Search invoices</label>
         <input type="text" id="search" placeholder="Search by ID, merchant, or customer...">
+        <label for="statusFilter" class="sr-only">Filter by status</label>
         <select id="statusFilter">
           <option value="">All Statuses</option>
           <option value="Pending">Pending</option>
@@ -28,21 +31,22 @@
     <div class="summary" id="summary"></div>
 
     <div class="table-wrapper">
-      <table id="invoiceTable">
+      <table id="invoiceTable" aria-label="Invoice list">
         <thead>
           <tr>
-            <th data-sort="id">ID</th>
-            <th data-sort="merchant">Merchant</th>
-            <th data-sort="customer">Customer</th>
-            <th data-sort="amount">Amount</th>
-            <th data-sort="status">Status</th>
-            <th data-sort="created_at">Created</th>
-            <th data-sort="expires_at">Expires</th>
+            <th scope="col" data-sort="id" aria-sort="ascending">ID</th>
+            <th scope="col" data-sort="merchant">Merchant</th>
+            <th scope="col" data-sort="customer">Customer</th>
+            <th scope="col" data-sort="amount">Amount</th>
+            <th scope="col" data-sort="status">Status</th>
+            <th scope="col" data-sort="created_at">Created</th>
+            <th scope="col" data-sort="expires_at">Expires</th>
           </tr>
         </thead>
         <tbody id="invoiceBody"></tbody>
       </table>
     </div>
+    <div id="main-content"></div>
 
     <div class="legend">
       <h3>Status Legend</h3>
@@ -58,5 +62,23 @@
   </div>
 
   <script src="app.js"></script>
+  <script>
+    // Update aria-sort attributes after each render
+    const origRender = render;
+    render = function() {
+      origRender();
+      updateAriaSort();
+    };
+    function updateAriaSort() {
+      document.querySelectorAll('thead th[data-sort]').forEach(th => {
+        const field = th.dataset.sort;
+        if (field === sortField) {
+          th.setAttribute('aria-sort', sortAsc ? 'ascending' : 'descending');
+        } else {
+          th.removeAttribute('aria-sort');
+        }
+      });
+    }
+  </script>
 </body>
 </html>

@@ -32,6 +32,10 @@
     overflow: hidden;
   }
   .fn-list.open { display: block; }
+  .contract-header:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+  }
   .fn-row {
     display: flex;
     align-items: baseline;
@@ -50,14 +54,15 @@
 </style>
 </head>
 <body>
+  <a href="#explorer" class="skip-link">Skip to main content</a>
   <div class="container">
     <header>
       <h1>ABI Explorer</h1>
-      <p style="color:#6b7280;font-size:0.875rem;margin-top:4px">
+      <p style="color:#4b5563;font-size:0.875rem;margin-top:4px">
         Read-only reference for deployed COMEBACKHERE Protocol contracts.
       </p>
     </header>
-    <div id="explorer"></div>
+    <div id="explorer" role="main"></div>
   </div>
 
   <script>
@@ -173,21 +178,31 @@
       }).join('');
 
       return `<div class="contract-section">
-        <div class="contract-header" data-target="${id}" onclick="toggleSection(this)">
-          <h2>${abi.contract}</h2>
+        <div class="contract-header" data-target="${id}" onclick="toggleSection(this)" role="button" tabindex="0" aria-expanded="false" aria-controls="${id}">
+          <h2 id="${id}-title">${abi.contract}</h2>
           <span class="version">v${abi.version}</span>
           <span class="badge" style="background:#e0e7ff;color:#3730a3">${abi.functions.length} functions</span>
-          <span class="chevron">▶</span>
+          <span class="chevron" aria-hidden="true">▶</span>
         </div>
-        <div class="fn-list" id="${id}">${fnRows}</div>
+        <div class="fn-list" id="${id}" role="region" aria-labelledby="${id}-title">${fnRows}</div>
       </div>`;
     }
 
     function toggleSection(header) {
       const target = document.getElementById(header.dataset.target);
-      header.classList.toggle('open');
+      const isOpen = header.classList.toggle('open');
       target.classList.toggle('open');
+      header.setAttribute('aria-expanded', String(isOpen));
     }
+
+    // Keyboard support: Enter / Space to toggle the collapsible sections
+    document.getElementById('explorer').addEventListener('keydown', (e) => {
+      const btn = e.target.closest('.contract-header');
+      if (btn && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        toggleSection(btn);
+      }
+    });
 
     document.getElementById('explorer').innerHTML = ABIS.map(renderContract).join('');
   </script>
