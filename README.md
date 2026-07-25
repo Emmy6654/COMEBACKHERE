@@ -59,6 +59,27 @@ docker-compose ps
 curl http://localhost:8000/health
 ```
 
+### docker-compose.override.yml
+
+A `docker-compose.override.yml` file is included in the repository. Docker
+Compose [automatically merges]
+(https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/) this
+file with `docker-compose.yml` when you run `docker-compose up`. The override
+adds the **backend** and **frontend** services so you can run the full stack
+locally without modifying the base compose file.
+
+Developers commonly edit this file to:
+
+- Point `VITE_API_URL` / `VITE_SOROBAN_RPC` to a different environment
+- Adjust port mappings if the defaults conflict with other services
+- Mount local source directories for hot-reloading during development
+
+To inspect the effective compose configuration that Docker will use:
+
+```sh
+docker-compose config
+```
+
 ### Deploying Contracts Locally
 
 ```sh
