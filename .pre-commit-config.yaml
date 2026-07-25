@@ -12,10 +12,16 @@ repos:
   - repo: local
     hooks:
       - id: abi-snapshot-hygiene
-        name: ABI snapshot hygiene
+        name: ABI snapshot staging hygiene
         entry: scripts/check_abi_snapshot_hygiene.sh
         language: system
         pass_filenames: false
+      - id: check-abi-snapshots
+        name: ABI snapshot content check
+        entry: scripts/check_abi_snapshots_precommit.sh
+        language: system
+        pass_filenames: false
+        files: '^(COMEBACKHERE-contracts/contracts/|abis/)'
       - id: lint-docs
         name: Markdown lint
         entry: scripts/lint-docs.sh
