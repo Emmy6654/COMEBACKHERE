@@ -8,12 +8,17 @@ interface CopyableTextProps {
 
 export function CopyableText({ text, label, className }: CopyableTextProps) {
   const [copied, setCopied] = useState(false)
+  const [announcement, setAnnouncement] = useState("")
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(text)
     setCopied(true)
+    // Clear first so identical consecutive copies still mutate the live
+    // region's content, since screen readers only announce on a change.
+    setAnnouncement("")
+    window.setTimeout(() => setAnnouncement(`Copied ${label ?? text} to clipboard`), 50)
     setTimeout(() => setCopied(false), 2000)
-  }, [text])
+  }, [text, label])
 
   return (
     <span
@@ -44,8 +49,6 @@ export function CopyableText({ text, label, className }: CopyableTextProps) {
       </svg>
       {copied && (
         <span
-          role="status"
-          aria-live="polite"
           style={{
             position: "absolute",
             top: "-24px",
@@ -63,6 +66,26 @@ export function CopyableText({ text, label, className }: CopyableTextProps) {
           Copied!
         </span>
       )}
+      {/* Always mounted so screen readers pick up the text mutation; a
+          region inserted at the same time as its content is unreliably
+          announced. */}
+      <span
+        role="status"
+        aria-live="polite"
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          padding: 0,
+          margin: "-1px",
+          overflow: "hidden",
+          clip: "rect(0, 0, 0, 0)",
+          whiteSpace: "nowrap",
+          border: 0,
+        }}
+      >
+        {announcement}
+      </span>
     </span>
   )
 }
