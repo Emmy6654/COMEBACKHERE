@@ -31,17 +31,38 @@ Set these via environment variables or in a `.env.mainnet` file. Scripts will fa
 4. Verify WASM hashes match the deployment issue.
 5. Submit deployment transactions through the approved signer.
 6. Record transaction hashes and deployed contract IDs.
-7. Update backend production secrets with:
-   - `INVOICE_CONTRACT_ID`
-   - `TREASURY_CONTRACT_ID`
-   - `COMPLIANCE_CONTRACT_ID`
-8. Run backend `GET /health/rpc` and a low-value end-to-end invoice payment smoke test.
+7. Deploy and initialize the compliance contract:
+   - Deploy the compliance WASM to Soroban mainnet.
+   - Call `initialize` with the protocol admin address.
+   - Populate the initial allowlist with the admin, treasury signers, and any pre-approved merchants by calling `allow_address` for each.
+   - Record the `COMPLIANCE_CONTRACT_ID` in the ceremony log.
+8. Deploy and initialize the invoice contract:
+   - Deploy the invoice WASM to Soroban mainnet.
+   - Call `initialize` with the protocol admin address and the deployed compliance contract address.
+   - Configure the grace window via `set_grace_window` if the default is not appropriate.
+   - Record the `INVOICE_CONTRACT_ID` in the ceremony log.
+9. Deploy and initialize the treasury contract:
+   - Deploy the treasury WASM to Soroban mainnet.
+   - Call `initialize` with the protocol admin address, the list of initial signers and their weights, and the required approval threshold.
+   - Record the `TREASURY_CONTRACT_ID` in the ceremony log.
+10. Update backend production secrets with:
+    - `INVOICE_CONTRACT_ID`
+    - `TREASURY_CONTRACT_ID`
+    - `COMPLIANCE_CONTRACT_ID`
+11. Run backend `GET /health/rpc` and a low-value end-to-end invoice payment smoke test.
+
+## Compliance-Specific Admin Key Handling
+
+- The compliance contract's admin keypair **must** be distinct from the invoice and treasury admin keypairs where possible to limit blast radius in the event of key compromise.
+- The compliance admin key must be stored in a separate KMS key or hardware wallet from other contract admin keys.
+- During signing ceremony, the compliance `initialize` and `allow_address` transactions should be signed and submitted **before** the invoice contract is initialized, because the invoice contract references the compliance contract at initialization time.
 
 ## Abort Conditions
 
 - Any signer mismatch
 - Any WASM hash mismatch
 - Soroban RPC health degraded across all configured endpoints
+- Compliance contract initialization fails or `is_allowed` returns unexpected results for the initial allowlist
 - Any failed low-value payment smoke test
 
 ---
