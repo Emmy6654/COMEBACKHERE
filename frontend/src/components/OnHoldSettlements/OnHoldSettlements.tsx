@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Settlement } from '../../types'
+import { EmptyState, EmptyStateIcon } from '../EmptyState/EmptyState'
 
 const API_BASE = '/api'
 
@@ -117,7 +118,11 @@ export default function OnHoldSettlements() {
       {actionSuccess && <p style={{ color: 'var(--color-success)' }} role="status" aria-live="polite">{actionSuccess}</p>}
 
       {settlements.length === 0 ? (
-        <p>No settlements currently on hold.</p>
+        <EmptyState
+          icon={<EmptyStateIcon />}
+          title="No On-Hold Settlements"
+          description="There are currently no settlements on hold. All settlements are processing normally."
+        />
       ) : (
         <table style={styles.table}>
           <thead>
