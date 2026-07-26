@@ -115,3 +115,19 @@ export const allowAddressUntil = (address: string, untilTimestamp: number, publi
     nativeToScVal(address, { type: "address" }),
     nativeToScVal(untilTimestamp, { type: "u64" }),
   ])
+
+/**
+ * Fetches a list of recent payer/merchant addresses from recent invoices.
+ */
+export async function getRecentAddresses(): Promise<string[]> {
+  try {
+    const apiBase = (import.meta.env.VITE_API_BASE as string) ?? "/api"
+    const res = await fetch(`${apiBase}/invoices/recent-addresses`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json() as { addresses?: string[] }
+    return data.addresses ?? []
+  } catch (err: unknown) {
+    console.warn("Failed to fetch recent addresses:", err)
+    return []
+  }
+}
