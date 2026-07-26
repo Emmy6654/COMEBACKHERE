@@ -41,12 +41,15 @@ export function RefundRequest({
     setSubmitting(true)
     const res = await onRequestRefund()
     setSubmitting(false)
-    setShowConfirm(false)
-    setResult({
-      success: res.success,
-      hash: res.transaction_hash,
-      errorMsg: res.error,
-    })
+    if (res.success) {
+      setShowConfirm(false)
+      setResult({
+        success: res.success,
+        hash: res.transaction_hash,
+        errorMsg: res.error,
+      })
+    }
+    // If error, the modal will handle it internally
   }
 
   return (
