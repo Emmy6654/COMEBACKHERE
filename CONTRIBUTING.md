@@ -1,5 +1,33 @@
 # Contributing
 
+## Which stack do I work on?
+
+The repository contains two parallel source trees for each layer — Rust
+contracts, Node backend, and React frontend. From directory names alone it is
+not obvious which tree receives a given change.
+
+The short rule:
+
+- Prefer `COMEBACKHERE-contracts/` for contract changes
+- Prefer `comebackhere-backend/` for backend changes
+- Prefer `comebackhere-frontend/` for frontend changes
+
+These are the trees built and tested by CI (`make test`,
+`.github/workflows/ci-contracts.yml`, `ci.yml`). They are the canonical
+source of truth and the only path that gets the full required-status-check
+matrix on every PR.
+
+The sibling-less top-level `contracts/`, `backend/`, and `frontend/`
+directories are also valid PR targets — they contain older in-tree copies of
+the same sources and are still referenced from documentation (for example,
+`docs/error-codes.md` cites `contracts/invoice/src/lib.rs` as the source of
+`InvoiceError`). They do not, however, have a dedicated CI workflow of their
+own, so changes there rely on whichever `ci-*.yml` job happens to match the
+files. When in doubt, target the canonical `COMEBACKHERE-*` tree.
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full reasoning, the exact
+directory layout, and how the mirrors are kept in step.
+
 ## Local hooks
 
 Install [pre-commit](https://pre-commit.com/) and enable the repository hooks:
