@@ -13,6 +13,9 @@ const defaults = {
   network: null,
   expectedNetwork: NETWORK,
   onConnect: vi.fn(),
+  error: null,
+  isLocked: false,
+  isNotInstalled: false,
 }
 
 describe("WalletBar — disconnected state", () => {
@@ -38,6 +41,111 @@ describe("WalletBar — disconnected state", () => {
   it("does not render wallet address", () => {
     render(<WalletBar {...defaults} />)
     expect(screen.queryByTestId("wallet-address")).not.toBeInTheDocument()
+  })
+})
+
+describe("WalletBar — locked wallet state", () => {
+  const lockedProps = {
+    ...defaults,
+    isLocked: true,
+    error: "User rejected",
+  }
+
+  it("renders locked wallet error message", () => {
+    render(<WalletBar {...lockedProps} />)
+    expect(screen.getByText("Wallet is locked")).toBeInTheDocument()
+  })
+
+  it("shows lock icon", () => {
+    render(<WalletBar {...lockedProps} />)
+    expect(screen.getByText("🔒")).toBeInTheDocument()
+  })
+
+  it("renders unlock and retry button", () => {
+    render(<WalletBar {...lockedProps} />)
+    const btn = screen.getByTestId("unlock-wallet-btn")
+    expect(btn).toBeInTheDocument()
+    expect(btn).toHaveTextContent("Unlock & Retry")
+  })
+
+  it("unlock button calls onRetry when clicked", async () => {
+    const onRetry = vi.fn()
+    render(<WalletBar {...lockedProps} onRetry={onRetry} />)
+    await userEvent.click(screen.getByTestId("unlock-wallet-btn"))
+    expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  it("unlock button is disabled while retrying", () => {
+    const onRetry = vi.fn()
+    render(
+      <WalletBar {...lockedProps} onRetry={onRetry} connecting={true} />
+    )
+    expect(screen.getByTestId("unlock-wallet-btn")).toBeDisabled()
+    expect(screen.getByText("Retrying...")).toBeInTheDocument()
+  })
+
+  it("has alert role for accessibility", () => {
+    render(<WalletBar {...lockedProps} />)
+    const alert = screen.getByRole("alert")
+    expect(alert).toBeInTheDocument()
+  })
+})
+
+describe("WalletBar — not installed state", () => {
+  const notInstalledProps = {
+    ...defaults,
+    isNotInstalled: true,
+    error: "Freighter wallet not detected",
+  }
+
+  it("renders not installed error message", () => {
+    render(<WalletBar {...notInstalledProps} />)
+    expect(screen.getByText("Freighter wallet not detected")).toBeInTheDocument()
+  })
+
+  it("shows warning icon", () => {
+    render(<WalletBar {...notInstalledProps} />)
+    expect(screen.getByText("⚠️")).toBeInTheDocument()
+  })
+
+  it("renders install extension link", () => {
+    render(<WalletBar {...notInstalledProps} />)
+    const link = screen.getByText("Install Extension")
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute("href", "https://www.freighter.app/")
+    expect(link).toHaveAttribute("target", "_blank")
+  })
+})
+
+describe("WalletBar — generic error state", () => {
+  const errorProps = {
+    ...defaults,
+    connected: false,
+    error: "Connection failed",
+  }
+
+  it("renders generic error message", () => {
+    render(<WalletBar {...errorProps} />)
+    expect(screen.getByText("Connection failed")).toBeInTheDocument()
+  })
+
+  it("shows error icon", () => {
+    render(<WalletBar {...errorProps} />)
+    expect(screen.getByText("❌")).toBeInTheDocument()
+  })
+
+  it("renders try again button", () => {
+    render(<WalletBar {...errorProps} />)
+    const btn = screen.getByTestId("retry-connect-btn")
+    expect(btn).toBeInTheDocument()
+    expect(btn).toHaveTextContent("Try Again")
+  })
+
+  it("try again button calls onRetry", async () => {
+    const onRetry = vi.fn()
+    render(<WalletBar {...errorProps} onRetry={onRetry} />)
+    await userEvent.click(screen.getByTestId("retry-connect-btn"))
+    expect(onRetry).toHaveBeenCalledOnce()
   })
 })
 
