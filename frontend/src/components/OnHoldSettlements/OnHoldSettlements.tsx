@@ -65,21 +65,28 @@ export default function OnHoldSettlements() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [acting, setActing] = useState<Record<number, boolean>>({})
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const pageSize = 20
 
   const fetchOnHold = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`${API_BASE}/treasury/on-hold-settlements`)
+      const res = await fetch(`${API_BASE}/treasury/on-hold-settlements?page=${page}&limit=${pageSize}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: Settlement[] = await res.json()
       setSettlements(data)
+      const totalCount = res.headers.get('X-Total-Count')
+      if (totalCount) {
+        setTotalPages(Math.ceil(Number(totalCount) / pageSize))
+      }
     } catch (e: any) {
       setError(e.message || 'Failed to fetch on-hold settlements')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [page, pageSize])
 
   useEffect(() => {
     fetchOnHold()
@@ -124,53 +131,78 @@ export default function OnHoldSettlements() {
           description="There are currently no settlements on hold. All settlements are processing normally."
         />
       ) : (
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>ID</th>
-              <th style={styles.th}>Merchant</th>
-              <th style={styles.th}>Amount (USDC)</th>
-              <th style={styles.th}>Hold Reason</th>
-              <th style={styles.th}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {settlements.map(s => (
-              <tr key={s.id}>
-                <td style={styles.td}>{s.id}</td>
-                <td style={styles.td}>{shorten(s.merchant_address)}</td>
-                <td style={styles.td}>{formatAmount(s.amount)}</td>
-                <td style={styles.td}>
-                  {s.hold_reason ? (
-                    <HoldReasonBadge reason={s.hold_reason} />
-                  ) : (
-                    <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                  )}
-                </td>
-                <td style={styles.td}>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      style={styles.releaseBtn}
-                      disabled={!!acting[s.id]}
-                      onClick={() => handleAction(s.id, 'release')}
-                      aria-label={`Release hold on settlement #${s.id}`}
-                    >
-                      {acting[s.id] ? '...' : 'Release'}
-                    </button>
-                    <button
-                      style={styles.escalateBtn}
-                      disabled={!!acting[s.id]}
-                      onClick={() => handleAction(s.id, 'escalate')}
-                      aria-label={`Escalate settlement #${s.id}`}
-                    >
-                      {acting[s.id] ? '...' : 'Escalate'}
-                    </button>
-                  </div>
-                </td>
+        <>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>ID</th>
+                <th style={styles.th}>Merchant</th>
+                <th style={styles.th}>Amount (USDC)</th>
+                <th style={styles.th}>Hold Reason</th>
+                <th style={styles.th}>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {settlements.map(s => (
+                <tr key={s.id}>
+                  <td style={styles.td}>{s.id}</td>
+                  <td style={styles.td}>{shorten(s.merchant_address)}</td>
+                  <td style={styles.td}>{formatAmount(s.amount)}</td>
+                  <td style={styles.td}>
+                    {s.hold_reason ? (
+                      <HoldReasonBadge reason={s.hold_reason} />
+                    ) : (
+                      <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                    )}
+                  </td>
+                  <td style={styles.td}>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        style={styles.releaseBtn}
+                        disabled={!!acting[s.id]}
+                        onClick={() => handleAction(s.id, 'release')}
+                        aria-label={`Release hold on settlement #${s.id}`}
+                      >
+                        {acting[s.id] ? '...' : 'Release'}
+                      </button>
+                      <button
+                        style={styles.escalateBtn}
+                        disabled={!!acting[s.id]}
+                        onClick={() => handleAction(s.id, 'escalate')}
+                        aria-label={`Escalate settlement #${s.id}`}
+                      >
+                        {acting[s.id] ? '...' : 'Escalate'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {totalPages > 1 && (
+            <div style={styles.pagination}>
+              <button
+                style={styles.paginationBtn}
+                disabled={page === 1}
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                aria-label="Previous page"
+              >
+                Previous
+              </button>
+              <span style={styles.paginationInfo}>
+                Page {page} of {totalPages}
+              </span>
+              <button
+                style={styles.paginationBtn}
+                disabled={page === totalPages}
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                aria-label="Next page"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -225,5 +257,27 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--color-warning)',
     color: '#fff',
     cursor: 'pointer',
+  },
+  pagination: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '16px',
+    marginTop: '20px',
+    padding: '16px',
+  },
+  paginationBtn: {
+    padding: '8px 16px',
+    fontSize: '0.875rem',
+    border: '1px solid var(--color-border)',
+    borderRadius: 4,
+    background: 'var(--color-card-bg)',
+    color: 'var(--color-text)',
+    cursor: 'pointer',
+    transition: 'background 0.15s, border-color 0.15s',
+  },
+  paginationInfo: {
+    fontSize: '0.875rem',
+    color: 'var(--color-text-muted)',
   },
 }
