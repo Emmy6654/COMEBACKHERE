@@ -1,0 +1,25 @@
+name: CI - Error Codes Documentation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - 'COMEBACKHERE-contracts/**'
+      - 'docs/error-codes.md'
+      - 'scripts/check_error_docs_sync.sh'
+      - '.github/workflows/ci-error-docs.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-error-docs-sync:
+    name: check-error-codes-docs-sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify contract error variants are documented
+        run: ./scripts/check_error_docs_sync.sh
