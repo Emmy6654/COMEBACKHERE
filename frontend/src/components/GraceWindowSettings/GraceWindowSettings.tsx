@@ -98,6 +98,19 @@ export default function GraceWindowSettings() {
 
   const parsedSeconds = parseDurationInput(inputValue, inputUnit)
 
+  // Inline validation mirroring backend constraints
+  const getValidationError = (): string | null => {
+    if (!inputValue) {
+      return null // No error if field is empty (just disabled save)
+    }
+    if (!parsedSeconds) {
+      return "Enter a valid positive duration"
+    }
+    return null
+  }
+
+  const validationError = getValidationError()
+
   const handleSave = async () => {
     if (!parsedSeconds) {
       setError("Enter a valid positive duration")
@@ -159,13 +172,18 @@ export default function GraceWindowSettings() {
           <div className="grace-window-form__inputs">
             <input
               id="grace-window-value"
-              className="form-input grace-window-form__value"
+              className={`form-input grace-window-form__value${validationError ? " form-input--error" : ""}`}
               type="number"
               min="1"
               step="1"
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
+              onChange={(e) => {
+                setInputValue(e.target.value)
+                setError(null) // Clear backend errors when user starts typing
+              }}
               disabled={loading || saving}
+              aria-invalid={!!validationError}
+              aria-describedby={validationError ? "grace-validation-error" : undefined}
             />
             <select
               className="form-input grace-window-form__unit"
@@ -180,6 +198,11 @@ export default function GraceWindowSettings() {
               <option value="days">Days</option>
             </select>
           </div>
+          {validationError && (
+            <p id="grace-validation-error" className="form-error grace-window-form__inline-error">
+              {validationError}
+            </p>
+          )}
         </div>
 
         {parsedSeconds != null && currentSeconds != null && parsedSeconds !== currentSeconds && (
