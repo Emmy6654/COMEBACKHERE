@@ -33,7 +33,8 @@ export function EscrowRelease() {
     })
   }
 
-  const canRelease = connected && invoice?.status === InvoiceStatus.Paid
+  const isMerchantWallet = address && invoice?.merchant && address.toLowerCase() === invoice.merchant.toLowerCase()
+  const canRelease = connected && invoice?.status === InvoiceStatus.Paid && isMerchantWallet
 
   return (
     <div className="escrow-release">
@@ -126,6 +127,32 @@ export function EscrowRelease() {
                 Escrow release is available on Paid invoices
                 (current status: {invoice.status}).
               </p>
+            )}
+
+            {connected && invoice.status === InvoiceStatus.Paid && !isMerchantWallet && (
+              <div
+                style={{
+                  padding: "12px",
+                  background: "var(--color-warning-bg)",
+                  border: "1px solid var(--color-warning-border)",
+                  borderRadius: "var(--radius)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+                role="alert"
+              >
+                <span style={{ flex: 1 }}>
+                  Only the merchant wallet can release the escrow. This invoice's merchant is {invoice.merchant}.
+                </span>
+                <button
+                  className="btn btn--primary"
+                  disabled
+                  title="You must connect with the merchant's wallet to release this escrow"
+                >
+                  Release Escrow
+                </button>
+              </div>
             )}
           </div>
         </div>

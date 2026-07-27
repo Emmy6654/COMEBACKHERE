@@ -121,6 +121,37 @@ export function TransactionHistory({ invoice }: { invoice: Invoice }) {
     setPage(1)
   }
 
+  const exportAsCSV = () => {
+    if (filteredEvents.length === 0) return
+
+    const headers = ["Event Type", "Timestamp", "Address", "Description"]
+    const rows = filteredEvents.map((event) => [
+      EVENT_LABELS[event.type],
+      new Date(event.timestamp).toLocaleString(),
+      event.address,
+      event.description,
+    ])
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) =>
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+      ),
+    ].join("\n")
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+    const link = document.createElement("a")
+    const url = URL.createObjectURL(blob)
+
+    link.setAttribute("href", url)
+    link.setAttribute("download", `transaction-history-${new Date().toISOString().split("T")[0]}.csv`)
+    link.style.visibility = "hidden"
+
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   return (
     <div className="history-panel" role="region" aria-label="Transaction history">
       <div className="history-panel__header">
@@ -174,6 +205,15 @@ export function TransactionHistory({ invoice }: { invoice: Invoice }) {
         <button className="btn btn--secondary btn--sm" onClick={resetFilters} aria-label="Reset all filters">
           Reset
         </button>
+        {filteredEvents.length > 0 && (
+          <button
+            className="btn btn--secondary btn--sm"
+            onClick={exportAsCSV}
+            aria-label="Export filtered events as CSV"
+          >
+            Export CSV
+          </button>
+        )}
       </div>
 
       {filteredEvents.length === 0 ? (
