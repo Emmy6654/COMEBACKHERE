@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>COMEBACKHERE</title>
+    <script>
+      (function() {
+        const THEME_STORAGE_KEY = 'comebackhere-theme';
+        const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        if (storedTheme === 'dark' || storedTheme === 'light') {
+          document.documentElement.dataset.theme = storedTheme;
+          document.documentElement.style.colorScheme = storedTheme;
+        } else {
+          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const theme = prefersDark ? 'dark' : 'light';
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

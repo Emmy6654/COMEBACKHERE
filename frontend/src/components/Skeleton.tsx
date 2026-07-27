@@ -71,3 +71,57 @@ export function DashboardStatsSkeleton() {
     </div>
   )
 }
+
+export function SettlementDetailSkeleton() {
+  return (
+    <div className="settlement-detail" aria-label="Loading settlement details" role="status">
+      <div className="settlement-detail__header">
+        <Skeleton width="180px" height="28px" aria-label="Loading settlement ID" />
+        <Skeleton width="80px" height="24px" aria-label="Loading settlement status" />
+      </div>
+
+      <div className="settlement-detail__info">
+        <div className="settlement-detail__row">
+          <Skeleton width="80px" height="16px" aria-label="Loading merchant label" />
+          <Skeleton width="120px" height="16px" aria-label="Loading merchant address" />
+        </div>
+        <div className="settlement-detail__row">
+          <Skeleton width="120px" height="16px" aria-label="Loading amount label" />
+          <Skeleton width="80px" height="16px" aria-label="Loading amount" />
+        </div>
+        <div className="settlement-detail__row">
+          <Skeleton width="140px" height="16px" aria-label="Loading total signer weight label" />
+          <Skeleton width="40px" height="16px" aria-label="Loading total signer weight" />
+        </div>
+      </div>
+
+      <div className="settlement-detail__progress-section">
+        <Skeleton width="140px" height="24px" aria-label="Loading approval progress title" />
+        <div className="settlement-detail__progress-visuals">
+          <div className="approval-ring">
+            <Skeleton width="128px" height="128px" className="approval-ring__svg" aria-label="Loading approval ring" />
+          </div>
+          <div className="settlement-detail__progress-details">
+            <div className="approval-progress-bar">
+              <Skeleton width="100%" height="24px" aria-label="Loading progress bar" />
+              <Skeleton width="60px" height="16px" aria-label="Loading progress percentage" />
+            </div>
+            <div className="signer-approval-list">
+              <Skeleton width="140px" height="18px" aria-label="Loading signer approvals title" />
+              <div className="signer-approval-list__items">
+                {Array.from({ length: 3 }, (_, i) => (
+                  <div key={i} className="signer-approval-item">
+                    <Skeleton width="16px" height="16px" aria-label="Loading approval icon" />
+                    <Skeleton width="80px" height="16px" aria-label="Loading signer address" />
+                    <Skeleton width="70px" height="16px" aria-label="Loading signer weight" />
+                    <Skeleton width="60px" height="20px" aria-label="Loading approval badge" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
