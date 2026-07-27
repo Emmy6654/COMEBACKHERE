@@ -8,10 +8,14 @@ import thresholdRouter from "./routes/threshold.js"
 import disputesRouter from "./routes/disputes.js"
 import analyticsRouter from "./routes/analytics.js"
 import { rateLimitMiddleware } from "./middleware/rateLimiter.js"
+import { correlationIdMiddleware } from "./middleware/correlationId.js"
 
 export function createApp() {
   const app = express()
   app.use(express.json())
+  // Attach / propagate X-Request-Id before any other middleware so every log
+  // line and downstream call can reference the same correlation ID.
+  app.use(correlationIdMiddleware)
   app.use(rateLimitMiddleware)
   app.use("/invoices", invoicesRouter)
   app.use("/invoices", releaseEscrowRouter)
