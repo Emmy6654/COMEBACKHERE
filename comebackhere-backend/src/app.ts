@@ -14,6 +14,9 @@ import { openapiSpec } from "./openapi.js"
 export function createApp() {
   const app = express()
   app.use(express.json())
+  // Attach / propagate X-Request-Id before any other middleware so every log
+  // line and downstream call can reference the same correlation ID.
+  app.use(correlationIdMiddleware)
   app.use(rateLimitMiddleware)
 
   // ── Health ──────────────────────────────────────────────────────────────────

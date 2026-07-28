@@ -19,6 +19,8 @@ export interface IndexerCursor {
   paging_token: string | null
   last_ledger: number
   updated_at: Date
+  /** Event IDs already applied — used for reorg / replay deduplication. */
+  processed_event_ids?: string[]
 }
 
 let client: MongoClient | null = null
