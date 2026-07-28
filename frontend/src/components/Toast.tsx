@@ -16,6 +16,8 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null)
 
+const MAX_VISIBLE_TOASTS = 3
+
 let nextId = 0
 
 const TOAST_ICONS: Record<ToastType, string> = {
@@ -66,11 +68,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => [...prev, { id, type, message, duration }])
   }, [])
 
+  // Only the first MAX_VISIBLE_TOASTS are rendered; the rest wait here and
+  // each one's auto-dismiss timer (in ToastItem) only starts once it is
+  // actually shown, so a queued toast can't expire before the user sees it.
+  const visibleToasts = toasts.slice(0, MAX_VISIBLE_TOASTS)
+
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
       <div className="toast-container" aria-live="polite">
-        {toasts.map((t) => (
+        {visibleToasts.map((t) => (
           <ToastItem key={t.id} toast={t} onDismiss={removeToast} />
         ))}
       </div>

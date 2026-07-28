@@ -33,6 +33,15 @@
   margin-top: 0.75rem;
 }
 
+.grace-window-form__inline-error {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+}
+
+.form-input--error {
+  border-color: var(--color-danger);
+}
+
 .form-label {
   font-size: 0.875rem;
   font-weight: 600;

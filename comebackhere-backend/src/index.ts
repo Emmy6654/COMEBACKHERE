@@ -1,57 +1,74 @@
-import { createApp } from "./app.js"
-import { startTreasuryIndexer } from "./services/treasury-indexer.js"
-
-// ---------------------------------------------------------------------------
-// Startup environment variable validation (issue #222)
-//
-// Fail fast with a single clear message listing every missing variable rather
-// than crashing on first use deep inside the application.
-// ---------------------------------------------------------------------------
-
-/** All env vars that must be present for the server to function correctly. */
-export const REQUIRED_ENV_VARS = [
-  "MONGODB_URI",
-  "REDIS_URL",
-  "SOROBAN_RPC_URL",
-  "TREASURY_CONTRACT_ID",
-  "INVOICE_CONTRACT_ID",
-  "ADMIN_KEY",
-  "WEBHOOK_SECRET",
-] as const
-
 /**
- * Validates that all required environment variables are set.
- * Accepts an optional env map so that tests can pass a controlled object
- * rather than relying on `process.env`.
+ * Backend entrypoint — Issue #219
  *
- * Throws an Error that lists *every* missing variable in one message.
+ * Handles SIGTERM and SIGINT for graceful shutdown:
+ *  1. Stops accepting new connections (server.close)
+ *  2. Stops the treasury indexer poll loop
+ *  3. Closes the MongoDB connection
+ *  4. Applies a hard-timeout safety net so the process always exits
  */
-export function validateEnv(env: Record<string, string | undefined> = process.env): void {
-  const missing = REQUIRED_ENV_VARS.filter((key) => !env[key])
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variable${missing.length > 1 ? "s" : ""}:\n` +
-        missing.map((k) => `  - ${k}`).join("\n") +
-        "\nSet the above variables before starting the server.",
-    )
+
+import { createApp } from "./app.js"
+import { startTreasuryIndexer, stopTreasuryIndexer } from "./services/treasury-indexer.js"
+import { stopIndexer } from "./indexer.js"
+import { closeMongo } from "./db/mongo.js"
+import type { Server } from "http"
+
+const PORT = process.env.PORT ?? "3000"
+/** Hard shutdown timeout in ms — forces exit if clean shutdown hangs. */
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? "10000")
+
+const app = createApp()
+startTreasuryIndexer()
+
+const server: Server = app.listen(Number(PORT), () => {
+  console.log(`comebackhere-backend listening on port ${PORT}`)
+})
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+// ---------------------------------------------------------------------------
+
+let shuttingDown = false
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return
+  shuttingDown = true
+
+  console.log(`[shutdown] received ${signal} — starting graceful shutdown`)
+
+  // Hard-timeout safety net: if clean shutdown takes too long, force exit.
+  const hardTimeout = setTimeout(() => {
+    console.error("[shutdown] hard timeout reached — forcing exit")
+    process.exit(1)
+  }, SHUTDOWN_TIMEOUT_MS)
+  // Allow the process to exit even if the timer is still pending.
+  hardTimeout.unref()
+
+  try {
+    // 1. Stop accepting new HTTP connections; wait for in-flight requests.
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()))
+    })
+    console.log("[shutdown] HTTP server closed")
+
+    // 2. Stop indexer poll loops.
+    stopTreasuryIndexer()
+    stopIndexer()
+    console.log("[shutdown] indexers stopped")
+
+    // 3. Close MongoDB connection.
+    await closeMongo()
+    console.log("[shutdown] MongoDB connection closed")
+
+    clearTimeout(hardTimeout)
+    console.log("[shutdown] clean exit")
+    process.exit(0)
+  } catch (err) {
+    console.error("[shutdown] error during shutdown:", err)
+    process.exit(1)
   }
 }
 
-// Only execute the server bootstrap when this file is run as the main entry
-// point, not when it is imported by tests or other modules.
-const isMain =
-  process.argv[1] != null &&
-  new URL(import.meta.url).pathname === new URL(process.argv[1], import.meta.url).pathname
-
-if (isMain) {
-  validateEnv()
-
-  const PORT = process.env.PORT ?? "3000"
-  const app = createApp()
-
-  startTreasuryIndexer()
-
-  app.listen(Number(PORT), () => {
-    console.log(`comebackhere-backend listening on port ${PORT}`)
-  })
-}
+process.on("SIGTERM", () => void shutdown("SIGTERM"))
+process.on("SIGINT",  () => void shutdown("SIGINT"))

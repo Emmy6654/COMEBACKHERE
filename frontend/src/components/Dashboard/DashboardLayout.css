@@ -112,3 +112,36 @@
     gap: 12px;
   }
 }
+
+@media (max-width: 414px) {
+  .dashboard-main {
+    padding: 16px 12px;
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .dashboard-heading {
+    font-size: 1.25rem;
+  }
+
+  .dashboard-header__controls {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .theme-toggle {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}

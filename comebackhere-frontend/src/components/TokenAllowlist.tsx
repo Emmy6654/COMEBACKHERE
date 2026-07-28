@@ -8,6 +8,7 @@ function isValidContractAddress(value: string): boolean {
 
 interface ConfirmDialog {
   token: string
+  action: "add" | "remove"
 }
 
 export function TokenAllowlist() {
@@ -39,19 +40,27 @@ export function TokenAllowlist() {
     }
   }, [])
 
-  const handleAdd = async () => {
+  const handleAdd = () => {
     setAddError(null)
     setAddSuccess(null)
     if (!isValidContractAddress(newToken)) {
       setAddError("Enter a valid Stellar contract address (C... or G..., 56 chars)")
       return
     }
+    setConfirm({ token: newToken.trim(), action: "add" })
+  }
+
+  const handleAddConfirmed = async () => {
+    if (!confirm || confirm.action !== "add") return
+    setAddError(null)
+    setAddSuccess(null)
     setAdding(true)
     try {
-      const result = await addAllowedToken(newToken.trim())
+      const result = await addAllowedToken(confirm.token)
       if (!result.success) throw new Error(result.error ?? "Add failed")
       setAddSuccess(`Token added. tx: ${result.hash}`)
       setNewToken("")
+      setConfirm(null)
       await loadTokens()
     } catch (err: unknown) {
       setAddError(err instanceof Error ? err.message : "Add failed")
@@ -61,7 +70,7 @@ export function TokenAllowlist() {
   }
 
   const handleRemoveConfirmed = async () => {
-    if (!confirm) return
+    if (!confirm || confirm.action !== "remove") return
     setRemoveError(null)
     setRemoving(true)
     try {
@@ -157,7 +166,7 @@ export function TokenAllowlist() {
                     <td>
                       <button
                         className="btn btn--danger btn--sm"
-                        onClick={() => setConfirm({ token })}
+                        onClick={() => setConfirm({ token, action: "remove" })}
                         aria-label={`Remove token ${token}`}
                       >
                         Remove
@@ -199,34 +208,50 @@ export function TokenAllowlist() {
             }}
           >
             <h3 id="confirm-title" style={{ marginBottom: "12px" }}>
-              Remove token?
+              {confirm.action === "add" ? "Add token to allowlist?" : "Remove token from allowlist?"}
             </h3>
             <p style={{ wordBreak: "break-all", marginBottom: "20px", fontSize: "0.9rem" }}>
               {confirm.token}
             </p>
             <p style={{ marginBottom: "20px", color: "var(--color-text-secondary)", fontSize: "0.9rem" }}>
-              This will call <code>remove_allowed_token</code> on the treasury contract.
-              The token will no longer be accepted.
+              {confirm.action === "add"
+                ? "This will call add_allowed_token on the treasury contract. The token will be accepted for treasury operations."
+                : "This will call remove_allowed_token on the treasury contract. The token will no longer be accepted. If this token has pending settlements or balances, they may be blocked."}
             </p>
             {removeError && (
               <div className="message message--error" style={{ marginBottom: "12px" }}>
                 {removeError}
               </div>
             )}
+            {addError && (
+              <div className="message message--error" style={{ marginBottom: "12px" }}>
+                {addError}
+              </div>
+            )}
             <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
               <button
                 className="btn btn--secondary"
-                onClick={() => { setConfirm(null); setRemoveError(null) }}
-                disabled={removing}
+                onClick={() => {
+                  setConfirm(null)
+                  setRemoveError(null)
+                  setAddError(null)
+                }}
+                disabled={removing || adding}
               >
                 Cancel
               </button>
               <button
-                className="btn btn--danger"
-                onClick={handleRemoveConfirmed}
-                disabled={removing}
+                className={`btn ${confirm.action === "add" ? "btn--primary" : "btn--danger"}`}
+                onClick={confirm.action === "add" ? handleAddConfirmed : handleRemoveConfirmed}
+                disabled={removing || adding}
               >
-                {removing ? "Removing..." : "Confirm Remove"}
+                {confirm.action === "add"
+                  ? adding
+                    ? "Adding..."
+                    : "Confirm Add"
+                  : removing
+                    ? "Removing..."
+                    : "Confirm Remove"}
               </button>
             </div>
           </div>
