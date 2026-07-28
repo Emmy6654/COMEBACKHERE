@@ -18,8 +18,68 @@ const VOTE_THRESHOLD = Number(process.env.DISPUTE_VOTE_THRESHOLD ?? 2)
 type VoteValue = "ResolvedClaimant" | "ResolvedCounterparty"
 
 /**
- * POST /disputes/:id/vote
- * Body: { signer_address: string, vote: "ResolvedClaimant" | "ResolvedCounterparty", weight?: number }
+ * @openapi
+ * /disputes/{id}/vote:
+ *   post:
+ *     tags: [Disputes]
+ *     summary: Cast a vote on a dispute
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Dispute ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [signer_address, vote]
+ *             properties:
+ *               signer_address:
+ *                 type: string
+ *                 description: Valid Stellar public key of the voting signer
+ *               vote:
+ *                 type: string
+ *                 enum: [ResolvedClaimant, ResolvedCounterparty]
+ *               weight:
+ *                 type: integer
+ *                 default: 1
+ *     responses:
+ *       200:
+ *         description: Vote recorded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 dispute_id:
+ *                   type: string
+ *                 signer_address:
+ *                   type: string
+ *                 vote:
+ *                   type: string
+ *                 claimant_weight:
+ *                   type: integer
+ *                 counterparty_weight:
+ *                   type: integer
+ *                 outcome:
+ *                   type: string
+ *                   nullable: true
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       409:
+ *         description: Dispute already resolved or signer already voted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post("/:id/vote", async (req: Request, res: Response) => {
   const disputeId = req.params.id
@@ -122,12 +182,63 @@ function validateBody(body: Partial<CreateDisputeBody>): string | null {
 }
 
 /**
- * POST /disputes
- * Validates the claimant, links the dispute to a settlement, transitions the
- * settlement to OnHold, and returns a dispute record.
- *
- * Body:  { claimant_address, settlement_id, reason? }
- * Returns: { dispute_id, settlement_id, claimant_address, status, settlement_status }
+ * @openapi
+ * /disputes:
+ *   post:
+ *     tags: [Disputes]
+ *     summary: Raise a dispute linked to a settlement
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [claimant_address, settlement_id]
+ *             properties:
+ *               claimant_address:
+ *                 type: string
+ *                 description: Valid Stellar public key of the disputing party
+ *               settlement_id:
+ *                 type: string
+ *                 description: Positive integer string identifying the settlement
+ *                 example: "5"
+ *               reason:
+ *                 type: string
+ *                 description: Human-readable reason for the dispute
+ *     responses:
+ *       201:
+ *         description: Dispute raised; settlement transitioned to OnHold
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 dispute_id:
+ *                   type: string
+ *                   example: "5-1720000000000"
+ *                 settlement_id:
+ *                   type: string
+ *                   example: "5"
+ *                 claimant_address:
+ *                   type: string
+ *                 status:
+ *                   type: string
+ *                   example: "Raised"
+ *                 settlement_status:
+ *                   type: string
+ *                   example: "OnHold"
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       503:
+ *         description: Service misconfiguration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post("/", async (req: Request, res: Response) => {
   const body = req.body as Partial<CreateDisputeBody>
