@@ -1,7 +1,7 @@
 # COMEBACKHERE
 
 > **COMEBACKHERE Protocol** — The Stripe for Stellar.
-> Founded and built by **[dreamgene](https://github.com/dreamgeneX)** · Founder & CEO
+
 
 Tooling, deployment scripts, ABIs, and integration resources for COMEBACKHERE Protocol.
 
