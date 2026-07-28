@@ -1,5 +1,12 @@
 import { Router, type Request, type Response } from "express"
 import { Keypair, Networks, TransactionBuilder, BASE_FEE, Contract, nativeToScVal, SorobanRpc, xdr } from "stellar-sdk"
+import {
+  connectMongo,
+  getInvoicesCollection,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  type InvoiceSearchFilter,
+} from "../db/mongo.js"
 
 const router = Router()
 
@@ -122,6 +129,66 @@ export async function createInvoice(
 
   return { invoice_id: invoiceId, status: "Pending" }
 }
+
+/**
+ * GET /invoices
+ * Returns a paginated list of invoices from the database.
+ *
+ * Query params:
+ *   limit   – number of records to return (default: 20, max: 100)
+ *   offset  – number of records to skip   (default: 0)
+ *   status  – filter by invoice status (optional)
+ *   merchant_address – filter by merchant (optional)
+ *
+ * Response shape (backward-compatible):
+ *   { data: Invoice[], total: number, limit: number, offset: number }
+ */
+router.get("/", async (req: Request, res: Response) => {
+  // Parse and validate limit
+  const rawLimit = req.query.limit !== undefined ? Number(req.query.limit) : DEFAULT_PAGE_SIZE
+  if (!Number.isInteger(rawLimit) || rawLimit <= 0) {
+    res.status(400).json({ error: "limit must be a positive integer" })
+    return
+  }
+  const limit = Math.min(rawLimit, MAX_PAGE_SIZE)
+
+  // Parse and validate offset
+  const rawOffset = req.query.offset !== undefined ? Number(req.query.offset) : 0
+  if (!Number.isInteger(rawOffset) || rawOffset < 0) {
+    res.status(400).json({ error: "offset must be a non-negative integer" })
+    return
+  }
+  const offset = rawOffset
+
+  // Build optional filter
+  const filter: InvoiceSearchFilter = {}
+  if (req.query.status) {
+    filter.status = req.query.status as InvoiceSearchFilter["status"]
+  }
+  if (req.query.merchant_address) {
+    filter.merchant_address = req.query.merchant_address as string
+  }
+
+  try {
+    const database = await connectMongo()
+    const invoices = getInvoicesCollection(database)
+
+    const [data, total] = await Promise.all([
+      invoices
+        .find(filter)
+        .sort({ created_at: -1 })
+        .skip(offset)
+        .limit(limit)
+        .toArray(),
+      invoices.countDocuments(filter),
+    ])
+
+    res.json({ data, total, limit, offset })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ error: message })
+  }
+})
 
 /**
  * GET /invoices/:id

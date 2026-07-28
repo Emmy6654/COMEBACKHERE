@@ -43,3 +43,11 @@ Thumbs.db
 
 # Vite cache
 .vite/
+
+# Lock files — not committed (each sub-package manages its own lock locally)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Rust lock file (library crates do not commit Cargo.lock)
+Cargo.lock
