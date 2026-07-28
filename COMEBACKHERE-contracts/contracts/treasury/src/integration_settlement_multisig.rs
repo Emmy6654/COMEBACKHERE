@@ -6,7 +6,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 fn setup_env() -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(TreasuryContract, ());
+    let contract_id = env.register_contract(None, TreasuryContract);
     (env, contract_id)
 }
 
