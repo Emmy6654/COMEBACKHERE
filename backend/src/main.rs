@@ -5,7 +5,13 @@ mod types;
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
 
-use routes::{health::get_rpc_health, invoices::get_invoice, pay::pay_invoice};
+use routes::{
+    cancel::cancel_invoice,
+    health::get_rpc_health,
+    invoices::get_invoice,
+    pay::pay_invoice,
+    refund::refund_invoice,
+};
 use soroban::SorobanClient;
 
 #[tokio::main]

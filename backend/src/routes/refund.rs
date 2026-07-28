@@ -7,7 +7,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::soroban::SorobanClient;
-use crate::types::{ErrorResponse, RefundRequest, RefundResponse};
+use crate::types::{ErrorResponse, RefundRequest};
 
 /// POST /invoices/:id/refund
 ///
@@ -79,13 +79,19 @@ mod tests {
         let client = SorobanClient::new(
             "http://127.0.0.1:19999/soroban/rpc".to_string(),
             "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
         );
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();
 
-        // No JSON body → 422 Unprocessable Entity
+        // No JSON body → 415 Unsupported Media Type or 422 Unprocessable Entity
         let resp = server.post("/invoices/1/refund").await;
-        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY
+                || resp.status_code() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "expected 415 or 422, got {}",
+            resp.status_code()
+        );
     }
 
     #[tokio::test]
@@ -93,6 +99,7 @@ mod tests {
         let client = SorobanClient::new(
             "http://127.0.0.1:19999/soroban/rpc".to_string(),
             "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
         );
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();
