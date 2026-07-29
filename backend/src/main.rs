@@ -1,12 +1,28 @@
+mod idempotency;
 mod routes;
 mod soroban;
 mod types;
 
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
+use std::time::Duration;
 
-use routes::{health::get_rpc_health, invoices::get_invoice, pay::pay_invoice};
+use idempotency::IdempotencyStore;
+use routes::{
+    cancel::cancel_invoice,
+    health::get_rpc_health,
+    invoices::get_invoice,
+    pay::pay_invoice,
+    refund::refund_invoice,
+};
 use soroban::SorobanClient;
+
+/// Shared application state threaded through every route handler.
+#[derive(Clone)]
+pub struct AppState {
+    pub client: Arc<SorobanClient>,
+    pub idempotency: Arc<IdempotencyStore>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -17,7 +33,11 @@ async fn main() {
     let horizon_url = std::env::var("HORIZON_API_URL")
         .unwrap_or_else(|_| "https://horizon.stellar.org".to_string());
 
-    let client = Arc::new(SorobanClient::new(rpc_url, contract_id, horizon_url));
+    let state = AppState {
+        client: Arc::new(SorobanClient::new(rpc_url, contract_id, horizon_url)),
+        // 24-hour TTL for idempotency keys (matches common API gateway defaults).
+        idempotency: IdempotencyStore::new(Duration::from_secs(86_400)),
+    };
 
     let app = Router::new()
         .route("/health/rpc", get(get_rpc_health))
@@ -25,7 +45,7 @@ async fn main() {
         .route("/invoices/:id/pay", post(pay_invoice))
         .route("/invoices/:id/cancel", post(cancel_invoice))
         .route("/invoices/:id/refund", post(refund_invoice))
-        .with_state(client);
+        .with_state(state);
 
     let addr = "0.0.0.0:3001";
     println!("comebackhere-backend listening on {addr}");

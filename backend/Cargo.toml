@@ -16,6 +16,7 @@ reqwest = { version = "0.12", features = ["json"] }
 anyhow = "1"
 base64 = "0.22"
 hex = "0.4"
+dashmap = "5"
 
 [dev-dependencies]
 axum-test = "14"

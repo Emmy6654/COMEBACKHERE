@@ -4,18 +4,18 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
 use crate::{
-    soroban::SorobanClient,
+    AppState,
     types::{DependencyHealth, HealthStatus, RpcHealthResponse},
 };
 
 pub async fn get_rpc_health(
-    State(client): State<Arc<SorobanClient>>,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let soroban_rpc = client.check_rpc_health().await;
-    let horizon = client.check_horizon_health().await;
+    let soroban_rpc = state.client.check_rpc_health().await;
+    let horizon = state.client.check_horizon_health().await;
 
     let soroban_health = match soroban_rpc {
         Ok(()) => DependencyHealth {
@@ -67,8 +67,8 @@ mod tests {
     use super::*;
     use crate::soroban::SorobanClient;
     use axum::{
-        body::Body,
-        http::{Request, StatusCode},
+        http::StatusCode,
+        response::IntoResponse,
         routing::{get, post},
         Router,
     };
@@ -82,13 +82,13 @@ mod tests {
                 "/soroban/rpc",
                 post(move || async move {
                     if healthy {
-                        axum::Json(json!({
+                        (StatusCode::OK, axum::Json(serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": 1,
                             "result": { "sequence": 42 }
-                        }))
+                        }))).into_response()
                     } else {
-                        StatusCode::INTERNAL_SERVER_ERROR
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
                 }),
             )
@@ -101,8 +101,7 @@ mod tests {
                         StatusCode::SERVICE_UNAVAILABLE
                     }
                 }),
-            )
-            .route("/health/rpc", get(get_rpc_health));
+            );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -116,20 +115,25 @@ mod tests {
     #[tokio::test]
     async fn returns_200_when_all_dependencies_are_healthy() {
         let addr = spawn_test_server(true).await;
-        let client = Arc::new(SorobanClient::new(
-            format!("http://{addr}/soroban/rpc"),
-            "contract".to_string(),
-            format!("http://{addr}"),
-        ));
+        let state = crate::AppState {
+            client: Arc::new(SorobanClient::new(
+                format!("http://{addr}/soroban/rpc"),
+                "contract".to_string(),
+                format!("http://{addr}"),
+            )),
+            idempotency: crate::idempotency::IdempotencyStore::new(
+                std::time::Duration::from_secs(86_400),
+            ),
+        };
 
         let app = Router::new()
             .route("/health/rpc", get(get_rpc_health))
-            .with_state(client);
+            .with_state(state);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let health_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
@@ -141,20 +145,25 @@ mod tests {
     #[tokio::test]
     async fn returns_503_when_any_dependency_is_degraded() {
         let addr = spawn_test_server(false).await;
-        let client = Arc::new(SorobanClient::new(
-            format!("http://{addr}/soroban/rpc"),
-            "contract".to_string(),
-            format!("http://{addr}"),
-        ));
+        let state = crate::AppState {
+            client: Arc::new(SorobanClient::new(
+                format!("http://{addr}/soroban/rpc"),
+                "contract".to_string(),
+                format!("http://{addr}"),
+            )),
+            idempotency: crate::idempotency::IdempotencyStore::new(
+                std::time::Duration::from_secs(86_400),
+            ),
+        };
 
         let app = Router::new()
             .route("/health/rpc", get(get_rpc_health))
-            .with_state(client);
+            .with_state(state);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let health_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
