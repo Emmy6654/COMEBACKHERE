@@ -87,11 +87,27 @@ fn check_admin(env: &Env, addr: &Address) -> Result<(), ContractError> {
     }
 }
 
+/// The invoice contract manages the full lifecycle of on-chain invoices:
+/// creation, payment, cancellation, refund requests, escrow release, and disputes.
+///
+/// Disputes are resolved via a cross-contract call to the configured treasury contract.
+/// Most mutating operations are guarded by a pause mechanism that only the admin can toggle.
 #[contract]
 pub struct InvoiceContract;
 
 #[contractimpl]
 impl InvoiceContract {
+    /// Initialises the contract, setting the admin address and default configuration.
+    ///
+    /// # Parameters
+    /// - `admin`: The address that will have administrative privileges (pause/unpause,
+    ///   set grace window, set treasury, etc.).
+    ///
+    /// # Errors
+    /// - [`ContractError::AlreadyInitialized`] if `initialize` has already been called.
+    ///
+    /// # Storage written
+    /// Sets `Admin`, `GraceWindow` (default 86 400 s), `InvoiceCount` (0), and `Paused` (false).
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(ContractError::AlreadyInitialized);
@@ -111,6 +127,30 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Creates a new invoice and stores it in persistent storage.
+    ///
+    /// Requires the merchant to have authorised this call (`merchant.require_auth()`).
+    /// The `nonce` is scoped per-merchant, so two different merchants may use the same
+    /// nonce value without collision.
+    ///
+    /// # Parameters
+    /// - `merchant`: The address of the invoice creator; must authorise the transaction.
+    /// - `customer`: The address of the intended payer.
+    /// - `amount`: The invoice amount in the smallest unit of `token`.
+    /// - `token`: The Stellar asset contract address used for payment.
+    /// - `expires_at`: Absolute ledger timestamp (seconds since Unix epoch) after which
+    ///   the invoice can no longer be paid.
+    /// - `nonce`: A per-merchant unique value used to prevent duplicate submissions.
+    ///
+    /// # Returns
+    /// The newly assigned invoice ID (a `u64` counter starting at 1).
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::DuplicateNonce`] if `(merchant, nonce)` has already been used.
+    ///
+    /// # Events
+    /// Emits `invoice_created(merchant, invoice_id)` on success.
     pub fn create_invoice(
         env: Env,
         merchant: Address,
@@ -160,6 +200,13 @@ impl InvoiceContract {
         Ok(count)
     }
 
+    /// Returns the full [`Invoice`] struct for a given ID.
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The numeric ID returned by `create_invoice`.
+    ///
+    /// # Errors
+    /// - [`ContractError::InvoiceNotFound`] if no invoice with that ID exists.
     pub fn get_invoice(env: Env, invoice_id: u64) -> Result<Invoice, ContractError> {
         env.storage()
             .persistent()
@@ -167,6 +214,14 @@ impl InvoiceContract {
             .ok_or(ContractError::InvoiceNotFound)
     }
 
+    /// Returns only the [`InvoiceStatus`] for a given invoice ID, without fetching
+    /// the full invoice. Useful for lightweight status polling.
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The numeric invoice ID.
+    ///
+    /// # Errors
+    /// - [`ContractError::InvoiceNotFound`] if no invoice with that ID exists.
     pub fn get_invoice_status(env: Env, invoice_id: u64) -> Result<InvoiceStatus, ContractError> {
         let invoice = env
             .storage()
@@ -176,6 +231,23 @@ impl InvoiceContract {
         Ok(invoice.status)
     }
 
+    /// Marks a batch of invoices as [`InvoiceStatus::Paid`] in a single transaction.
+    ///
+    /// Each invoice in the batch must be in `Pending` status and must not have expired.
+    /// Processing stops and returns an error on the first failure — no partial updates
+    /// are committed when an error is returned.
+    ///
+    /// # Parameters
+    /// - `invoice_ids`: A vector of invoice IDs to mark as paid.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::InvoiceNotFound`] if any ID in the batch does not exist.
+    /// - [`ContractError::InvoiceAlreadyPaid`] if any invoice is not in `Pending` status.
+    /// - [`ContractError::InvoiceExpired`] if any invoice's `expires_at` has passed.
+    ///
+    /// # Events
+    /// Emits `invoice_paid(invoice_id)` for each successfully marked invoice.
     pub fn mark_paids(env: Env, invoice_ids: Vec<u64>) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         for id in invoice_ids.iter() {
@@ -199,6 +271,20 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Cancels a `Pending` invoice. Either the merchant or the customer may call this.
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The ID of the invoice to cancel.
+    /// - `caller`: The address requesting the cancellation; must be the merchant or customer.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::InvoiceNotFound`] if no invoice with that ID exists.
+    /// - [`ContractError::Unauthorized`] if `caller` is neither the merchant nor the customer.
+    /// - [`ContractError::InvoiceCancelled`] if the invoice is not in `Pending` status.
+    ///
+    /// # Events
+    /// Emits `invoice_cancelled(invoice_id)` on success.
     pub fn cancel_invoiced(env: Env, invoice_id: u64, caller: Address) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         let mut invoice = env
@@ -220,6 +306,25 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Requests a refund for a `Paid` invoice. Only the customer may call this.
+    ///
+    /// Transitions the invoice from [`InvoiceStatus::Paid`] to
+    /// [`InvoiceStatus::RefundRequested`], which then allows the merchant to call
+    /// `release_escrow` once the grace window has elapsed.
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The ID of the invoice to refund.
+    /// - `caller`: Must be the invoice's `customer` address.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::InvoiceNotFound`] if no invoice with that ID exists or the
+    ///   invoice is not in `Paid` status.
+    /// - [`ContractError::NotCustomer`] if `caller` is not the invoice customer.
+    /// - [`ContractError::AlreadyRefundRequested`] if a refund has already been requested.
+    ///
+    /// # Events
+    /// Emits `invoice_refund_req(invoice_id)` on success.
     pub fn request_refund(
         env: Env,
         invoice_id: u64,
@@ -248,6 +353,27 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Releases an escrow hold after the refund grace window has expired.
+    /// Only the merchant may call this, and only when the invoice is in
+    /// [`InvoiceStatus::RefundRequested`].
+    ///
+    /// The grace window (default 86 400 s) is measured from `invoice.created_at`.
+    /// Adjustable by the admin via `set_grace_window`.
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The ID of the invoice whose escrow is to be released.
+    /// - `caller`: Must be the invoice's `merchant` address.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::InvoiceNotFound`] if no invoice with that ID exists.
+    /// - [`ContractError::NotMerchant`] if `caller` is not the invoice merchant.
+    /// - [`ContractError::RefundNotRequested`] if the invoice is not in `RefundRequested` status.
+    /// - [`ContractError::GraceWindowNotExpired`] if the current ledger timestamp is still
+    ///   within `created_at + grace_window`.
+    ///
+    /// # Events
+    /// Emits `escrow_released(invoice_id)` on success.
     pub fn release_escrow(
         env: Env,
         invoice_id: u64,
@@ -281,6 +407,20 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Expires a batch of `Pending` invoices whose `expires_at` timestamp has passed.
+    ///
+    /// Invoices that are not `Pending` or have not yet expired are silently skipped,
+    /// so this function is safe to call with a broad set of IDs.
+    ///
+    /// # Parameters
+    /// - `invoice_ids`: A vector of invoice IDs to check and potentially expire.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::InvoiceNotFound`] if any ID in the batch does not exist.
+    ///
+    /// # Events
+    /// Emits `invoice_expired(invoice_id)` for each invoice that transitions to `Expired`.
     pub fn batch_expire(env: Env, invoice_ids: Vec<u64>) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         let now = env.ledger().timestamp();
@@ -302,6 +442,16 @@ impl InvoiceContract {
     }
 
     /// Configure the treasury contract address (admin only).
+    ///
+    /// The treasury address is required before `raise_dispute`
+    /// can be called. Cross-contract calls to the treasury use this stored address.
+    ///
+    /// # Parameters
+    /// - `caller`: Must be the contract admin.
+    /// - `treasury`: The address of the deployed treasury contract.
+    ///
+    /// # Errors
+    /// - [`ContractError::Unauthorized`] if `caller` is not the admin.
     pub fn set_treasury(env: Env, caller: Address, treasury: Address) -> Result<(), ContractError> {
         check_admin(&env, &caller)?;
         env.storage()
@@ -310,14 +460,35 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Returns the currently configured treasury contract address, if any.
+    ///
+    /// Returns `None` if `set_treasury` has not been called yet.
     pub fn get_treasury(env: Env) -> Option<Address> {
         env.storage()
             .persistent()
             .get(&DataKey::TreasuryContract)
     }
 
-    /// Raise a dispute on an invoice, cross-contract calling treasury place_on_hold.
-    /// Emits a dispute_raised event on success.
+    /// Raises a dispute on an invoice via a cross-contract call to the treasury.
+    ///
+    /// **Cross-contract call:** invokes `treasury.raise_dispute(claimant, settlement_id, reason)`.
+    /// The treasury contract address must have been set via `set_treasury`.
+    ///
+    /// Requires `claimant` to authorise the call (`claimant.require_auth()`).
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The invoice the dispute relates to; must exist.
+    /// - `settlement_id`: The ID of the settlement record in the treasury contract.
+    /// - `claimant`: The address raising the dispute; must authorise the transaction.
+    /// - `reason`: An opaque reason code interpreted by the treasury contract.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::InvoiceNotFound`] if no invoice with `invoice_id` exists.
+    /// - [`ContractError::TreasuryNotConfigured`] if no treasury address has been set.
+    ///
+    /// # Events
+    /// Emits `dispute_raised(invoice_id, settlement_id, claimant)` on success.
     pub fn raise_dispute(
         env: Env,
         invoice_id: u64,
@@ -356,6 +527,17 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Pauses the contract, blocking all mutating operations until `unpause`
+    /// is called. Admin-only.
+    ///
+    /// # Parameters
+    /// - `caller`: Must be the contract admin.
+    ///
+    /// # Errors
+    /// - [`ContractError::Unauthorized`] if `caller` is not the admin.
+    ///
+    /// # Events
+    /// Emits `contract_paused()` on success.
     pub fn pause(env: Env, caller: Address) -> Result<(), ContractError> {
         check_admin(&env, &caller)?;
         env.storage()
@@ -365,6 +547,16 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Unpauses the contract, restoring all mutating operations. Admin-only.
+    ///
+    /// # Parameters
+    /// - `caller`: Must be the contract admin.
+    ///
+    /// # Errors
+    /// - [`ContractError::Unauthorized`] if `caller` is not the admin.
+    ///
+    /// # Events
+    /// Emits `contract_unpaused()` on success.
     pub fn unpause(env: Env, caller: Address) -> Result<(), ContractError> {
         check_admin(&env, &caller)?;
         env.storage()
@@ -374,6 +566,17 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Sets the grace window duration used by `release_escrow`.
+    /// Admin-only. The contract must not be paused.
+    ///
+    /// # Parameters
+    /// - `caller`: Must be the contract admin.
+    /// - `window`: Grace window in seconds measured from `invoice.created_at`.
+    ///   Defaults to 86 400 (24 h) on initialisation.
+    ///
+    /// # Errors
+    /// - [`ContractError::ContractPaused`] if the contract is currently paused.
+    /// - [`ContractError::Unauthorized`] if `caller` is not the admin.
     pub fn set_grace_window(env: Env, caller: Address, window: u64) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         check_admin(&env, &caller)?;
@@ -383,6 +586,10 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Returns the currently configured grace window in seconds.
+    ///
+    /// Falls back to 86 400 (24 h) if the value has never been written (e.g. before
+    /// `initialize` is called).
     pub fn get_grace_window(env: Env) -> u64 {
         env.storage()
             .persistent()

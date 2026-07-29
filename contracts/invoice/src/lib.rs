@@ -53,11 +53,27 @@ pub enum DataKey {
     Nonce(Address, u64),
 }
 
+/// The invoice contract manages the lifecycle of on-chain invoices:
+/// creation, payment, cancellation, and pause/unpause controls.
+///
+/// Amounts are denominated in USDC stroops. A minimum of
+/// `MIN_AMOUNT_STROOPS` (10 000 000, i.e. 1 USDC) is enforced to prevent
+/// dust invoices.
 #[contract]
 pub struct InvoiceContract;
 
 #[contractimpl]
 impl InvoiceContract {
+    /// Initialises the contract, setting the admin address and default state.
+    ///
+    /// # Parameters
+    /// - `admin`: The address that will have administrative privileges (pause/unpause).
+    ///
+    /// # Errors
+    /// - [`InvoiceError::AlreadyInitialized`] if `initialize` has already been called.
+    ///
+    /// # Storage written
+    /// Sets `Admin`, `Paused` (false), and `NextId` (1).
     pub fn initialize(env: Env, admin: Address) -> Result<(), InvoiceError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(InvoiceError::AlreadyInitialized);
@@ -68,6 +84,32 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Creates a new invoice and stores it in instance storage.
+    ///
+    /// Requires the merchant to have authorised this call (`merchant.require_auth()`).
+    /// The `nonce` is scoped per-merchant so two different merchants may reuse the
+    /// same nonce value without collision.
+    ///
+    /// # Parameters
+    /// - `merchant`: The address of the invoice creator; must authorise the transaction.
+    /// - `amount_usdc`: The net invoice amount in USDC stroops. Must be ≥ `MIN_AMOUNT_STROOPS`
+    ///   (10 000 000 stroops = 1 USDC).
+    /// - `gross_usdc`: The gross amount (including fees) in USDC stroops. Must be ≥ `amount_usdc`.
+    /// - `expires_in_seconds`: Lifetime of the invoice in seconds from the current ledger
+    ///   timestamp. Must be > 0.
+    /// - `nonce`: A per-merchant unique value used to prevent duplicate submissions.
+    ///
+    /// # Returns
+    /// The newly assigned invoice ID (a `u64` counter starting at 1).
+    ///
+    /// # Errors
+    /// - [`InvoiceError::ContractPaused`] if the contract is currently paused.
+    /// - [`InvoiceError::InvalidAmount`] if `amount_usdc` or `gross_usdc` is zero,
+    ///   or if `gross_usdc < amount_usdc`.
+    /// - [`InvoiceError::AmountPrecision`] if `amount_usdc < MIN_AMOUNT_STROOPS`.
+    /// - [`InvoiceError::ZeroDuration`] if `expires_in_seconds` is 0.
+    /// - [`InvoiceError::ExpiryOverflow`] if `ledger_timestamp + expires_in_seconds` overflows `u64`.
+    /// - [`InvoiceError::DuplicateNonce`] if `(merchant, nonce)` has already been used.
     pub fn create_invoice(
         env: Env,
         merchant: Address,
@@ -131,6 +173,13 @@ impl InvoiceContract {
         Ok(id)
     }
 
+    /// Returns the full [`Invoice`] struct for a given ID.
+    ///
+    /// # Parameters
+    /// - `invoice_id`: The numeric ID returned by `create_invoice`.
+    ///
+    /// # Errors
+    /// - [`InvoiceError::NotFound`] if no invoice with that ID exists.
     pub fn get_invoice(env: Env, invoice_id: u64) -> Result<Invoice, InvoiceError> {
         env.storage()
             .instance()
@@ -138,6 +187,19 @@ impl InvoiceContract {
             .ok_or(InvoiceError::NotFound)
     }
 
+    /// Marks a `Pending` invoice as [`InvoiceStatus::Paid`].
+    ///
+    /// Requires `payer` to authorise the call (`payer.require_auth()`). Any address
+    /// may act as payer — this contract does not restrict payment to the `customer` field.
+    ///
+    /// # Parameters
+    /// - `payer`: The address making the payment; must authorise the transaction.
+    /// - `invoice_id`: The ID of the invoice to pay.
+    ///
+    /// # Errors
+    /// - [`InvoiceError::NotFound`] if no invoice with that ID exists.
+    /// - [`InvoiceError::NotPending`] if the invoice is not in `Pending` status.
+    /// - [`InvoiceError::Expired`] if the current ledger timestamp ≥ `invoice.expires_at`.
     pub fn pay_invoice(env: Env, payer: Address, invoice_id: u64) -> Result<(), InvoiceError> {
         payer.require_auth();
         let mut invoice: Invoice = env
@@ -158,6 +220,18 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Cancels a `Pending` invoice. Only the merchant who created it may cancel it.
+    ///
+    /// Requires `caller` to authorise the call (`caller.require_auth()`).
+    ///
+    /// # Parameters
+    /// - `caller`: Must be the invoice's `merchant` address.
+    /// - `invoice_id`: The ID of the invoice to cancel.
+    ///
+    /// # Errors
+    /// - [`InvoiceError::NotFound`] if no invoice with that ID exists.
+    /// - [`InvoiceError::Unauthorized`] if `caller` is not the invoice merchant.
+    /// - [`InvoiceError::NotPending`] if the invoice is not in `Pending` status.
     pub fn cancel_invoice(
         env: Env,
         caller: Address,
@@ -182,6 +256,16 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Pauses the contract, blocking `create_invoice` and other guarded operations
+    /// until `unpause` is called. Admin-only.
+    ///
+    /// Requires `admin` to authorise the call (`admin.require_auth()`).
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the address stored at initialisation.
+    ///
+    /// # Errors
+    /// - [`InvoiceError::Unauthorized`] if `admin` does not match the stored admin address.
     pub fn pause(env: Env, admin: Address) -> Result<(), InvoiceError> {
         admin.require_auth();
         let stored: Address = env
@@ -196,6 +280,15 @@ impl InvoiceContract {
         Ok(())
     }
 
+    /// Unpauses the contract, restoring all guarded operations. Admin-only.
+    ///
+    /// Requires `admin` to authorise the call (`admin.require_auth()`).
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the address stored at initialisation.
+    ///
+    /// # Errors
+    /// - [`InvoiceError::Unauthorized`] if `admin` does not match the stored admin address.
     pub fn unpause(env: Env, admin: Address) -> Result<(), InvoiceError> {
         admin.require_auth();
         let stored: Address = env
