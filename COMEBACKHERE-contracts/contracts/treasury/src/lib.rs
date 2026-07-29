@@ -34,6 +34,7 @@ pub enum TreasuryError {
     InvalidThreshold = 6,
     DuplicateSigner = 7,
     InvalidWeightSum = 8,
+    NotSettlementParty = 9,
 }
 
 #[contracttype]
@@ -301,7 +302,11 @@ impl TreasuryContract {
     ) -> Result<(), TreasuryError> {
         check_not_paused(&e)?;
         signer.require_auth();
-        let mut settlement = Self::get_settlement_internal(&e, settlement_id);
+        let settlement = Self::get_settlement_internal(&e, settlement_id);
+        if signer != settlement.merchant {
+            return Err(TreasuryError::NotSettlementParty);
+        }
+        let mut settlement = settlement;
         settlement.status = SettlementStatus::OnHold;
         e.storage()
             .instance()
@@ -680,5 +685,45 @@ mod tests {
         c.execute_settlement(&s1, &sid, &token);
         let pending = c.get_pending_settlements(&None, &None);
         assert!(!pending.contains(&sid));
+    }
+
+    #[test]
+    fn test_raise_dispute_by_non_merchant_fails() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer_a = soroban_sdk::Address::generate(&e);
+        let signer_b = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        let merchant = soroban_sdk::Address::generate(&e);
+        c.initialize(
+            &soroban_sdk::vec![&e, (signer_a.clone(), 1u64), (signer_b.clone(), 1u64)],
+            &2,
+            &admin,
+        );
+        let sid = c.propose_settlement(&signer_a, &token, &1000u64, &merchant);
+        // signer_b is not the merchant, should be rejected
+        let res = c.try_raise_dispute(&signer_b, &sid, &1u32);
+        assert_eq!(res, Err(Ok(TreasuryError::NotSettlementParty)));
+    }
+
+    #[test]
+    fn test_raise_dispute_by_merchant_succeeds() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer_a = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        let merchant = soroban_sdk::Address::generate(&e);
+        c.initialize(
+            &soroban_sdk::vec![&e, (signer_a.clone(), 1u64)],
+            &1,
+            &admin,
+        );
+        let sid = c.propose_settlement(&signer_a, &token, &1000u64, &merchant);
+        // merchant raises dispute - should succeed
+        c.raise_dispute(&merchant, &sid, &1u32);
+        let settlement = c.get_pending_settlements(&None, &None);
+        assert!(!settlement.contains(&sid));
     }
 }
