@@ -35,6 +35,8 @@ pub enum SettlementError {
     Unauthorized = 2,
     AlreadyApproved = 3,
     NotPending = 4,
+    DuplicateSigner = 5,
+    InvalidWeightSum = 6,
 }
 
 #[contracttype]
@@ -51,7 +53,23 @@ pub struct SettlementContract;
 #[contractimpl]
 impl SettlementContract {
     /// Initialize with signers (address, weight pairs) and approval threshold.
-    pub fn initialize(e: Env, signers: Vec<(Address, u64)>, threshold: u64) {
+    pub fn initialize(
+        e: Env,
+        signers: Vec<(Address, u64)>,
+        threshold: u64,
+    ) -> Result<(), SettlementError> {
+        let mut seen: Vec<Address> = Vec::new(&e);
+        let mut total_weight: u64 = 0;
+        for (signer, weight) in signers.iter() {
+            if seen.contains(&signer) {
+                return Err(SettlementError::DuplicateSigner);
+            }
+            seen.push_back(signer.clone());
+            total_weight += weight;
+        }
+        if total_weight < threshold {
+            return Err(SettlementError::InvalidWeightSum);
+        }
         e.storage().instance().set(&DataKey::Threshold, &threshold);
         e.storage().instance().set(&DataKey::NextId, &1u64);
         for (signer, weight) in signers.iter() {
@@ -59,6 +77,7 @@ impl SettlementContract {
                 .instance()
                 .set(&DataKey::Signer(signer.clone()), &weight);
         }
+        Ok(())
     }
 
     /// Propose a new settlement; returns the settlement ID.
@@ -177,12 +196,12 @@ mod tests {
         let signer = Address::generate(&e);
         let merchant = Address::generate(&e);
 
-        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 2u64)], &3u64);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 2u64)], &2u64);
         let sid = c.propose(&signer, &merchant, &1000u64);
 
         let res = c.approve_settlement(&signer, &sid);
         assert_eq!(res.approval_weight, 2);
-        assert_eq!(res.threshold, 3);
+        assert_eq!(res.threshold, 2);
     }
 
     #[test]
@@ -207,7 +226,7 @@ mod tests {
         let signer = Address::generate(&e);
         let merchant = Address::generate(&e);
 
-        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &2u64);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1u64);
         let sid = c.propose(&signer, &merchant, &100u64);
 
         c.approve_settlement(&signer, &sid);
