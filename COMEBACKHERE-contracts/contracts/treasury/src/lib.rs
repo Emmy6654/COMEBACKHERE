@@ -32,6 +32,8 @@ pub enum TreasuryError {
     TokenNotAllowed = 4,
     Unauthorized = 5,
     InvalidThreshold = 6,
+    DuplicateSigner = 7,
+    InvalidWeightSum = 8,
 }
 
 #[contracttype]
@@ -62,8 +64,25 @@ pub struct TreasuryContract;
 
 #[contractimpl]
 impl TreasuryContract {
-    pub fn initialize(e: Env, signers: Vec<(Address, u64)>, threshold: u64, admin: Address) {
+    pub fn initialize(
+        e: Env,
+        signers: Vec<(Address, u64)>,
+        threshold: u64,
+        admin: Address,
+    ) -> Result<(), TreasuryError> {
         admin.require_auth();
+        let mut seen: Vec<Address> = Vec::new(&e);
+        let mut total_weight: u64 = 0;
+        for (signer, weight) in signers.iter() {
+            if seen.contains(&signer) {
+                return Err(TreasuryError::DuplicateSigner);
+            }
+            seen.push_back(signer.clone());
+            total_weight += weight;
+        }
+        if total_weight < threshold {
+            return Err(TreasuryError::InvalidWeightSum);
+        }
         e.storage().instance().set(&DataKey::Admin, &admin);
         e.storage().instance().set(&DataKey::Threshold, &threshold);
         e.storage().instance().set(&DataKey::Paused, &false);
@@ -73,6 +92,7 @@ impl TreasuryContract {
                 .instance()
                 .set(&DataKey::Signer(signer.clone()), &weight);
         }
+        Ok(())
     }
 
     pub fn set_signer(
@@ -399,7 +419,8 @@ mod tests {
         let (e, id) = setup();
         let c = client(&e, &id);
         let admin = soroban_sdk::Address::generate(&e);
-        c.initialize(&soroban_sdk::vec![&e], &1, &admin);
+        let signer = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         let result = c.get_pending_settlements(&None, &None);
         assert_eq!(result.len(), 0);
     }
@@ -540,7 +561,8 @@ mod tests {
         let c = client(&e, &id);
         let admin = soroban_sdk::Address::generate(&e);
         let signer = soroban_sdk::Address::generate(&e);
-        c.initialize(&soroban_sdk::vec![&e], &1, &admin);
+        let initial = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (initial.clone(), 1u64)], &1, &admin);
         c.pause(&admin);
         let res = c.try_set_signer(&admin, &signer, &1u64);
         assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
@@ -551,7 +573,8 @@ mod tests {
         let (e, id) = setup();
         let c = client(&e, &id);
         let admin = soroban_sdk::Address::generate(&e);
-        c.initialize(&soroban_sdk::vec![&e], &1, &admin);
+        let signer = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         c.pause(&admin);
         let res = c.try_update_threshold(&admin, &2u32);
         assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
@@ -564,15 +587,22 @@ mod tests {
         let (e, id) = setup();
         let c = client(&e, &id);
         let admin = soroban_sdk::Address::generate(&e);
-        let signer = soroban_sdk::Address::generate(&e);
+        let s1 = soroban_sdk::Address::generate(&e);
+        let s2 = soroban_sdk::Address::generate(&e);
+        let s3 = soroban_sdk::Address::generate(&e);
         let token = soroban_sdk::Address::generate(&e);
         let merchant = soroban_sdk::Address::generate(&e);
-        // threshold=3, signer weight=1 → approval_weight after approve = 1 < 3
-        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &3, &admin);
-        let sid = c.propose_settlement(&signer, &token, &500u64, &merchant);
-        c.approve_settlement(&signer, &sid);
+        // threshold=3, each signer weight=1 → total weight=3 >= 3 (valid init)
+        // After s1 approves: approval_weight=1 < 3
+        c.initialize(
+            &soroban_sdk::vec![&e, (s1.clone(), 1u64), (s2.clone(), 1u64), (s3.clone(), 1u64)],
+            &3,
+            &admin,
+        );
+        let sid = c.propose_settlement(&s1, &token, &500u64, &merchant);
+        c.approve_settlement(&s1, &sid);
         // execute should fail with InsufficientApprovals
-        let res = c.try_execute_settlement(&signer, &sid, &token);
+        let res = c.try_execute_settlement(&s1, &sid, &token);
         assert_eq!(res, Err(Ok(TreasuryError::InsufficientApprovals)));
         // settlement must still be Pending
         let pending = c.get_pending_settlements(&None, &None);
@@ -619,7 +649,8 @@ mod tests {
         let (e, id) = setup();
         let c = client(&e, &id);
         let admin = soroban_sdk::Address::generate(&e);
-        c.initialize(&soroban_sdk::vec![&e], &1, &admin);
+        let signer = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         let res = c.try_update_threshold(&admin, &0u32);
         assert_eq!(res, Err(Ok(TreasuryError::InvalidThreshold)));
     }
