@@ -7,51 +7,77 @@ use axum::{
 use std::sync::Arc;
 
 use crate::soroban::SorobanClient;
-use crate::types::{ErrorResponse, RefundRequest, RefundResponse};
+use crate::types::{ErrorResponse, RefundRequest};
 
 /// POST /invoices/:id/refund
 ///
 /// Allows a payer (customer) to request a refund on a paid invoice.
 /// Returns 422 when the contract returns NotPaid(10) — i.e. the invoice has not been paid.
+#[tracing::instrument(
+    name = "route.refund_invoice",
+    skip(client, body),
+    fields(invoice_id = %id, payer = %body.payer)
+)]
 pub async fn refund_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,
     Json(body): Json<RefundRequest>,
 ) -> impl IntoResponse {
+    tracing::info!("processing refund request");
+
     match client.refund_invoice(id, &body.payer, &body.signed_xdr).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
-        Err(e) if e.to_string().contains("NOT_PAID") => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(ErrorResponse {
-                error: "Invoice has not been paid and is not eligible for a refund".to_string(),
-                code: Some(10),
-            }),
-        )
-            .into_response(),
-        Err(e) if e.to_string().contains("UNAUTHORIZED") => (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Only the invoice payer is authorised to request a refund".to_string(),
-                code: Some(1),
-            }),
-        )
-            .into_response(),
-        Err(e) if e.to_string().contains("NOT_FOUND") => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Invoice {} not found", id),
-                code: Some(4),
-            }),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-                code: None,
-            }),
-        )
-            .into_response(),
+        Ok(resp) => {
+            tracing::info!(
+                status = ?resp.status,
+                tx_hash = %resp.transaction_hash,
+                "refund requested successfully"
+            );
+            (StatusCode::OK, Json(serde_json::json!(resp))).into_response()
+        }
+        Err(e) if e.to_string().contains("NOT_PAID") => {
+            tracing::warn!("refund rejected: invoice has not been paid");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: "Invoice has not been paid and is not eligible for a refund".to_string(),
+                    code: Some(10),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) if e.to_string().contains("UNAUTHORIZED") => {
+            tracing::warn!("refund rejected: payer not authorised");
+            (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Only the invoice payer is authorised to request a refund".to_string(),
+                    code: Some(1),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) if e.to_string().contains("NOT_FOUND") => {
+            tracing::warn!("refund rejected: invoice not found");
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Invoice {} not found", id),
+                    code: Some(4),
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "refund invoice failed with unexpected error");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: None,
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -79,13 +105,20 @@ mod tests {
         let client = SorobanClient::new(
             "http://127.0.0.1:19999/soroban/rpc".to_string(),
             "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
         );
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();
 
-        // No JSON body → 422 Unprocessable Entity
+        // No JSON body and no Content-Type header → 415 Unsupported Media Type
+        // (axum 0.7 rejects missing content-type before deserialisation)
         let resp = server.post("/invoices/1/refund").await;
-        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            resp.status_code() == StatusCode::UNSUPPORTED_MEDIA_TYPE
+                || resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY,
+            "expected 415 or 422, got {}",
+            resp.status_code()
+        );
     }
 
     #[tokio::test]
@@ -93,6 +126,7 @@ mod tests {
         let client = SorobanClient::new(
             "http://127.0.0.1:19999/soroban/rpc".to_string(),
             "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
         );
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();

@@ -33,7 +33,14 @@ impl SorobanClient {
     }
 
     /// Fetch invoice state from Soroban via get_invoice.
+    #[tracing::instrument(
+        name = "soroban.get_invoice",
+        skip(self),
+        fields(invoice_id = %invoice_id)
+    )]
     pub async fn get_invoice(&self, invoice_id: u64) -> Result<InvoiceResponse> {
+        tracing::debug!("sending simulateTransaction RPC call");
+
         let args_xdr = encode_u64_arg(invoice_id);
         let req = RpcRequest {
             jsonrpc: "2.0",
@@ -54,14 +61,22 @@ impl SorobanClient {
             .await?;
 
         if let Some(err) = resp.error {
-            return Err(rpc_error_to_anyhow(&err));
+            let e = rpc_error_to_anyhow(&err);
+            tracing::warn!(error = %e, "RPC error in get_invoice");
+            return Err(e);
         }
 
         let result = resp.result.ok_or_else(|| anyhow!("Empty RPC result"))?;
-        parse_invoice_result(&result, invoice_id)
+        let invoice = parse_invoice_result(&result, invoice_id)?;
+
+        tracing::debug!(status = ?invoice.status, "get_invoice RPC call succeeded");
+        Ok(invoice)
     }
 
+    #[tracing::instrument(name = "soroban.check_rpc_health", skip(self))]
     pub async fn check_rpc_health(&self) -> Result<()> {
+        tracing::debug!("sending getLatestLedger health probe");
+
         let req = RpcRequest {
             jsonrpc: "2.0",
             id: 3,
@@ -79,7 +94,9 @@ impl SorobanClient {
             .await?;
 
         if let Some(err) = resp.error {
-            return Err(rpc_error_to_anyhow(&err));
+            let e = rpc_error_to_anyhow(&err);
+            tracing::warn!(error = %e, "RPC health probe failed");
+            return Err(e);
         }
 
         resp.result
@@ -87,14 +104,22 @@ impl SorobanClient {
             .map(|_| ())
     }
 
+    #[tracing::instrument(name = "soroban.check_horizon_health", skip(self))]
     pub async fn check_horizon_health(&self) -> Result<()> {
+        tracing::debug!("sending Horizon health probe");
+
         let health_url = format!("{}/health", self.horizon_url.trim_end_matches('/'));
         let response = self.http.get(&health_url).send().await?;
 
         if !response.status().is_success() {
+            tracing::warn!(
+                http_status = %response.status(),
+                "Horizon health probe returned non-2xx"
+            );
             return Err(anyhow!("Horizon health check failed with status {}", response.status()));
         }
 
+        tracing::debug!("Horizon health probe succeeded");
         Ok(())
     }
 
@@ -104,6 +129,11 @@ impl SorobanClient {
     /// Errors:
     /// - "UNAUTHORIZED" when the contract returns InvoiceError::Unauthorized(1)
     /// - "NOT_FOUND"    when the contract returns InvoiceError::NotFound(6)
+    #[tracing::instrument(
+        name = "soroban.pay_invoice",
+        skip(self, signed_xdr),
+        fields(invoice_id = %invoice_id, payer = %payer)
+    )]
     pub async fn pay_invoice(
         &self,
         invoice_id: u64,
@@ -114,11 +144,13 @@ impl SorobanClient {
         let invoice = self.get_invoice(invoice_id).await?;
         if let Some(expected) = &invoice.payer {
             if !expected.is_empty() && expected != payer {
+                tracing::warn!("payer mismatch; rejecting pay_invoice");
                 return Err(anyhow!("UNAUTHORIZED"));
             }
         }
 
         // 2. Send the pre-signed transaction.
+        tracing::debug!("sending sendTransaction RPC call for pay");
         let req = RpcRequest {
             jsonrpc: "2.0",
             id: 2,
@@ -136,7 +168,9 @@ impl SorobanClient {
             .await?;
 
         if let Some(err) = resp.error {
-            return Err(rpc_error_to_anyhow(&err));
+            let e = rpc_error_to_anyhow(&err);
+            tracing::error!(error = %e, "sendTransaction RPC error in pay_invoice");
+            return Err(e);
         }
 
         let result = resp.result.ok_or_else(|| anyhow!("Empty RPC result"))?;
@@ -146,6 +180,8 @@ impl SorobanClient {
             .and_then(|h| h.as_str())
             .unwrap_or("")
             .to_string();
+
+        tracing::info!(tx_hash = %tx_hash, "pay_invoice RPC call succeeded");
 
         // 3. Return updated status (Paid) and the transaction hash.
         Ok(PayResponse {
@@ -161,6 +197,11 @@ impl SorobanClient {
     /// Errors:
     /// - "UNAUTHORIZED" when the contract returns ContractError::Unauthorized(1)
     /// - "NOT_FOUND"    when the contract returns ContractError::InvoiceNotFound(4)
+    #[tracing::instrument(
+        name = "soroban.cancel_invoice",
+        skip(self, signed_xdr),
+        fields(invoice_id = %invoice_id, merchant = %merchant)
+    )]
     pub async fn cancel_invoice(
         &self,
         invoice_id: u64,
@@ -170,10 +211,12 @@ impl SorobanClient {
         // 1. Verify the caller is the merchant recorded on the invoice.
         let invoice = self.get_invoice(invoice_id).await?;
         if invoice.merchant != merchant {
+            tracing::warn!("merchant mismatch; rejecting cancel_invoice");
             return Err(anyhow!("UNAUTHORIZED"));
         }
 
         // 2. Forward the pre-signed cancel transaction.
+        tracing::debug!("sending sendTransaction RPC call for cancel");
         let req = RpcRequest {
             jsonrpc: "2.0",
             id: 3,
@@ -191,7 +234,9 @@ impl SorobanClient {
             .await?;
 
         if let Some(err) = resp.error {
-            return Err(rpc_error_to_anyhow(&err));
+            let e = rpc_error_to_anyhow(&err);
+            tracing::error!(error = %e, "sendTransaction RPC error in cancel_invoice");
+            return Err(e);
         }
 
         let result = resp.result.ok_or_else(|| anyhow!("Empty RPC result"))?;
@@ -201,6 +246,8 @@ impl SorobanClient {
             .and_then(|h| h.as_str())
             .unwrap_or("")
             .to_string();
+
+        tracing::info!(tx_hash = %tx_hash, "cancel_invoice RPC call succeeded");
 
         Ok(CancelResponse {
             status: InvoiceStatus::Cancelled,
@@ -216,6 +263,11 @@ impl SorobanClient {
     /// - "NOT_PAID"     when the contract returns ContractError::RefundNotRequested(10)
     /// - "UNAUTHORIZED" when the contract returns ContractError::Unauthorized(1)
     /// - "NOT_FOUND"    when the contract returns ContractError::InvoiceNotFound(4)
+    #[tracing::instrument(
+        name = "soroban.refund_invoice",
+        skip(self, signed_xdr),
+        fields(invoice_id = %invoice_id, payer = %payer)
+    )]
     pub async fn refund_invoice(
         &self,
         invoice_id: u64,
@@ -226,11 +278,13 @@ impl SorobanClient {
         let invoice = self.get_invoice(invoice_id).await?;
         if let Some(expected) = &invoice.payer {
             if !expected.is_empty() && expected != payer {
+                tracing::warn!("payer mismatch; rejecting refund_invoice");
                 return Err(anyhow!("UNAUTHORIZED"));
             }
         }
 
         // 2. Forward the pre-signed refund transaction.
+        tracing::debug!("sending sendTransaction RPC call for refund");
         let req = RpcRequest {
             jsonrpc: "2.0",
             id: 4,
@@ -248,7 +302,9 @@ impl SorobanClient {
             .await?;
 
         if let Some(err) = resp.error {
-            return Err(rpc_error_to_anyhow(&err));
+            let e = rpc_error_to_anyhow(&err);
+            tracing::error!(error = %e, "sendTransaction RPC error in refund_invoice");
+            return Err(e);
         }
 
         let result = resp.result.ok_or_else(|| anyhow!("Empty RPC result"))?;
@@ -258,6 +314,8 @@ impl SorobanClient {
             .and_then(|h| h.as_str())
             .unwrap_or("")
             .to_string();
+
+        tracing::info!(tx_hash = %tx_hash, "refund_invoice RPC call succeeded");
 
         Ok(RefundResponse {
             status: InvoiceStatus::RefundRequested,
