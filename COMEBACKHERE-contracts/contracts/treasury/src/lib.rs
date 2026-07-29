@@ -253,12 +253,20 @@ impl TreasuryContract {
     pub fn pause(e: Env, admin: Address) -> Result<(), TreasuryError> {
         Self::check_admin(&e, &admin)?;
         e.storage().instance().set(&DataKey::Paused, &true);
+        e.events().publish(
+            (Symbol::new(&e, "contract_paused"),),
+            (),
+        );
         Ok(())
     }
 
     pub fn unpause(e: Env, admin: Address) -> Result<(), TreasuryError> {
         Self::check_admin(&e, &admin)?;
         e.storage().instance().set(&DataKey::Paused, &false);
+        e.events().publish(
+            (Symbol::new(&e, "contract_unpaused"),),
+            (),
+        );
         Ok(())
     }
 
@@ -680,5 +688,165 @@ mod tests {
         c.execute_settlement(&s1, &sid, &token);
         let pending = c.get_pending_settlements(&None, &None);
         assert!(!pending.contains(&sid));
+    }
+
+    // ── pause / unpause event tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_pause_emits_event() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.pause(&admin);
+        let all_events = e.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (id, "contract_paused".into())),
+            "contract_paused event should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_unpause_emits_event() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.pause(&admin);
+        c.unpause(&admin);
+        let all_events = e.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (id, "contract_unpaused".into())),
+            "contract_unpaused event should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_pause_unauthorized_fails() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let non_admin = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        let res = c.try_pause(&non_admin);
+        assert_eq!(res, Err(Ok(TreasuryError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_unpause_unauthorized_fails() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let non_admin = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.pause(&admin);
+        let res = c.try_unpause(&non_admin);
+        assert_eq!(res, Err(Ok(TreasuryError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_raise_dispute_when_paused_returns_contract_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        let merchant = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        let sid = c.propose_settlement(&signer, &token, &100u64, &merchant);
+        c.pause(&admin);
+        let res = c.try_raise_dispute(&merchant, &sid, &1u32);
+        assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_resolve_dispute_when_paused_returns_contract_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        let merchant = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        let sid = c.propose_settlement(&signer, &token, &100u64, &merchant);
+        c.pause(&admin);
+        let res = c.try_resolve_dispute(&signer, &sid, &true);
+        assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_deposit_when_paused_returns_contract_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let from = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.pause(&admin);
+        let res = c.try_deposit(&from, &100u64);
+        assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_withdraw_when_paused_returns_contract_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let to = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.pause(&admin);
+        let res = c.try_withdraw(&admin, &to, &100u64);
+        assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_add_token_to_allowlist_when_paused_returns_contract_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.pause(&admin);
+        let res = c.try_add_token_to_allowlist(&admin, &token);
+        assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_remove_token_from_allowlist_when_paused_returns_contract_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.add_token_to_allowlist(&admin, &token);
+        c.pause(&admin);
+        let res = c.try_remove_token_from_allowlist(&admin, &token);
+        assert_eq!(res, Err(Ok(TreasuryError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_readonly_entrypoints_work_when_paused() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        let merchant = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.propose_settlement(&signer, &token, &100u64, &merchant);
+        c.pause(&admin);
+
+        let threshold = c.get_threshold();
+        assert_eq!(threshold, 1);
+
+        let pending = c.get_pending_settlements(&None, &None);
+        assert_eq!(pending.len(), 1);
     }
 }

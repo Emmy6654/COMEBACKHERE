@@ -303,6 +303,7 @@ impl InvoiceContract {
 
     /// Configure the treasury contract address (admin only).
     pub fn set_treasury(env: Env, caller: Address, treasury: Address) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         check_admin(&env, &caller)?;
         env.storage()
             .persistent()
@@ -671,5 +672,111 @@ mod tests {
 
         let result = invoice_client.try_raise_dispute(&invoice_id, &1u64, &claimant, &1u32);
         assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_set_treasury_when_paused_returns_contract_paused() {
+        let (env, invoice_cid, _treasury_cid, admin, _claimant) = setup_with_treasury(1000);
+        let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
+        let new_treasury = Address::generate(&env);
+
+        invoice_client.pause(&admin);
+
+        let result = invoice_client.try_set_treasury(&admin, &new_treasury);
+        assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_pause_emits_event() {
+        let (env, invoice_cid, _treasury_cid, admin, _claimant) = setup_with_treasury(1000);
+        let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
+
+        invoice_client.pause(&admin);
+
+        let all_events = env.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (invoice_cid, "contract_paused".into())),
+            "contract_paused event should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_unpause_emits_event() {
+        let (env, invoice_cid, _treasury_cid, admin, _claimant) = setup_with_treasury(1000);
+        let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
+
+        invoice_client.pause(&admin);
+        invoice_client.unpause(&admin);
+
+        let all_events = env.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (invoice_cid, "contract_unpaused".into())),
+            "contract_unpaused event should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_mutating_entrypoints_blocked_when_paused() {
+        let (env, invoice_cid, _treasury_cid, admin, _claimant) = setup_with_treasury(1000);
+        let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
+
+        let merchant = Address::generate(&env);
+        let customer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let invoice_id =
+            invoice_client.create_invoice(&merchant, &customer, &100i128, &token, &9999, &1);
+
+        invoice_client.pause(&admin);
+
+        assert_eq!(
+            invoice_client.try_create_invoice(&merchant, &customer, &100i128, &token, &9999, &2),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            invoice_client.try_mark_paids(&soroban_sdk::vec![&env, invoice_id]),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            invoice_client.try_cancel_invoiced(&invoice_id, &merchant),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            invoice_client.try_request_refund(&invoice_id, &customer),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            invoice_client.try_release_escrow(&invoice_id, &merchant),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            invoice_client.try_batch_expire(&soroban_sdk::vec![&env, invoice_id]),
+            Err(Ok(ContractError::ContractPaused))
+        );
+    }
+
+    #[test]
+    fn test_readonly_entrypoints_work_when_paused() {
+        let (env, invoice_cid, _treasury_cid, admin, _claimant) = setup_with_treasury(1000);
+        let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
+
+        let merchant = Address::generate(&env);
+        let customer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let invoice_id =
+            invoice_client.create_invoice(&merchant, &customer, &100i128, &token, &9999, &1);
+
+        invoice_client.pause(&admin);
+
+        let invoice = invoice_client.get_invoice(&invoice_id);
+        assert_eq!(invoice.id, invoice_id);
+
+        let status = invoice_client.get_invoice_status(&invoice_id);
+        assert_eq!(status, InvoiceStatus::Pending);
+
+        let grace = invoice_client.get_grace_window();
+        assert_eq!(grace, 86400);
+
+        let treasury = invoice_client.get_treasury();
+        assert!(treasury.is_some());
     }
 }
