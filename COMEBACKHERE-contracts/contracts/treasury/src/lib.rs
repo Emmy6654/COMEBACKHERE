@@ -585,6 +585,9 @@ mod integration_settlement_multisig;
 mod integration_dispute_lifecycle;
 
 #[cfg(test)]
+mod benchmark;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
