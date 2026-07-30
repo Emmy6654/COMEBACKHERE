@@ -43,14 +43,22 @@ fn test_multisig_propose_collect_2_of_3_execute() {
     client.approve_settlement(&signer_a, &settlement_id);
 
     let pending_mid = client.get_pending_settlements(&None, &None);
-    assert_eq!(pending_mid.len(), 1, "settlement should still be pending after 1-of-2 approvals");
+    assert_eq!(
+        pending_mid.len(),
+        1,
+        "settlement should still be pending after 1-of-2 approvals"
+    );
 
     client.approve_settlement(&signer_b, &settlement_id);
 
     client.execute_settlement(&signer_a, &settlement_id, &token);
 
     let pending_after = client.get_pending_settlements(&None, &None);
-    assert_eq!(pending_after.len(), 0, "settlement should no longer be pending after execution");
+    assert_eq!(
+        pending_after.len(),
+        0,
+        "settlement should no longer be pending after execution"
+    );
 }
 
 #[test]
@@ -79,7 +87,10 @@ fn test_single_signer_insufficient_for_threshold_2() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.execute_settlement(&signer_a, &settlement_id, &token);
     }));
-    assert!(result.is_err(), "execution should fail with insufficient approvals");
+    assert!(
+        result.is_err(),
+        "execution should fail with insufficient approvals"
+    );
 }
 
 #[test]
@@ -109,7 +120,11 @@ fn test_weighted_signers_reach_threshold() {
     client.execute_settlement(&signer_a, &settlement_id, &token);
 
     let pending = client.get_pending_settlements(&None, &None);
-    assert_eq!(pending.len(), 0, "weighted signer with weight=2 should meet threshold=2");
+    assert_eq!(
+        pending.len(),
+        0,
+        "weighted signer with weight=2 should meet threshold=2"
+    );
 }
 
 #[test]
@@ -123,11 +138,7 @@ fn test_multiple_settlements_independent_approvals() {
     let token = Address::generate(&env);
     let merchant = Address::generate(&env);
 
-    let signers = vec![
-        &env,
-        (signer_a.clone(), 1u64),
-        (signer_b.clone(), 1u64),
-    ];
+    let signers = vec![&env, (signer_a.clone(), 1u64), (signer_b.clone(), 1u64)];
     client.initialize(&signers, &2u64, &admin);
 
     let s1 = client.propose_settlement(&signer_a, &token, &1_000_000u64, &merchant);
@@ -144,7 +155,10 @@ fn test_multiple_settlements_independent_approvals() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.execute_settlement(&signer_a, &s2, &token);
     }));
-    assert!(result.is_err(), "s2 should not be executable without approvals");
+    assert!(
+        result.is_err(),
+        "s2 should not be executable without approvals"
+    );
 }
 
 #[test]
@@ -158,11 +172,7 @@ fn test_execute_settlement_verifies_token_transfer_setup() {
     let token = Address::generate(&env);
     let merchant = Address::generate(&env);
 
-    let signers = vec![
-        &env,
-        (signer_a.clone(), 1u64),
-        (signer_b.clone(), 1u64),
-    ];
+    let signers = vec![&env, (signer_a.clone(), 1u64), (signer_b.clone(), 1u64)];
     client.initialize(&signers, &2u64, &admin);
 
     let settlement_id = client.propose_settlement(&signer_a, &token, &10_000_000u64, &merchant);
@@ -173,5 +183,9 @@ fn test_execute_settlement_verifies_token_transfer_setup() {
     client.execute_settlement(&signer_a, &settlement_id, &token);
 
     let pending = client.get_pending_settlements(&None, &None);
-    assert_eq!(pending.len(), 0, "executed settlement should no longer appear in pending list");
+    assert_eq!(
+        pending.len(),
+        0,
+        "executed settlement should no longer appear in pending list"
+    );
 }
