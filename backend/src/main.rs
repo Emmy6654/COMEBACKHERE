@@ -1,3 +1,4 @@
+mod rate_limiter;
 mod routes;
 mod soroban;
 mod types;
@@ -5,7 +6,14 @@ mod types;
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
 
-use routes::{health::get_rpc_health, invoices::get_invoice, pay::pay_invoice};
+use rate_limiter::{new_store, RateLimitConfig, RateLimiterLayer};
+use routes::{
+    cancel::cancel_invoice,
+    health::get_rpc_health,
+    invoices::get_invoice,
+    pay::pay_invoice,
+    refund::refund_invoice,
+};
 use soroban::SorobanClient;
 
 #[tokio::main]
@@ -19,12 +27,18 @@ async fn main() {
 
     let client = Arc::new(SorobanClient::new(rpc_url, contract_id, horizon_url));
 
+    // Rate-limiter layer: config is read from RATE_LIMIT_POINTS / RATE_LIMIT_DURATION
+    // (defaults: 60 requests per 60-second window, per IP).
+    let rl_config = RateLimitConfig::from_env();
+    let rl_layer = RateLimiterLayer::new(new_store(), rl_config);
+
     let app = Router::new()
         .route("/health/rpc", get(get_rpc_health))
         .route("/invoices/:id", get(get_invoice))
         .route("/invoices/:id/pay", post(pay_invoice))
         .route("/invoices/:id/cancel", post(cancel_invoice))
         .route("/invoices/:id/refund", post(refund_invoice))
+        .layer(rl_layer)
         .with_state(client);
 
     let addr = "0.0.0.0:3001";
