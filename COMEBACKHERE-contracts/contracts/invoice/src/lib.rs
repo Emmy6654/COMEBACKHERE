@@ -287,6 +287,7 @@ impl InvoiceContract {
     /// Emits `invoice_cancelled(invoice_id)` on success.
     pub fn cancel_invoiced(env: Env, invoice_id: u64, caller: Address) -> Result<(), ContractError> {
         check_not_paused(&env)?;
+        caller.require_auth();
         let mut invoice = env
             .storage()
             .persistent()
@@ -295,15 +296,35 @@ impl InvoiceContract {
         if caller != invoice.merchant && caller != invoice.customer {
             return Err(ContractError::Unauthorized);
         }
-        if invoice.status != InvoiceStatus::Pending {
-            return Err(ContractError::InvoiceCancelled);
+
+        match invoice.status {
+            // No funds have moved yet — simple cancellation.
+            InvoiceStatus::Pending => {
+                invoice.status = InvoiceStatus::Cancelled;
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Invoice(invoice_id), &invoice);
+                events::invoice_cancelled(&env, &invoice_id);
+                Ok(())
+            }
+            // Funds are held in escrow. Cancellation initiates the refund path by
+            // transitioning to RefundRequested so the release_escrow flow can
+            // complete the refund without leaving funds stuck.
+            InvoiceStatus::Paid => {
+                invoice.status = InvoiceStatus::RefundRequested;
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Invoice(invoice_id), &invoice);
+                events::invoice_refund_req(&env, &invoice_id);
+                Ok(())
+            }
+            // A refund is already in progress — return a descriptive error.
+            InvoiceStatus::RefundRequested => Err(ContractError::AlreadyRefundRequested),
+            // Terminal states: Expired, Released, Cancelled cannot be cancelled again.
+            InvoiceStatus::Expired | InvoiceStatus::Released | InvoiceStatus::Cancelled => {
+                Err(ContractError::InvoiceCancelled)
+            }
         }
-        invoice.status = InvoiceStatus::Cancelled;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Invoice(invoice_id), &invoice);
-        events::invoice_cancelled(&env, &invoice_id);
-        Ok(())
     }
 
     /// Requests a refund for a `Paid` invoice. Only the customer may call this.
@@ -878,5 +899,132 @@ mod tests {
 
         let result = invoice_client.try_raise_dispute(&invoice_id, &1u64, &claimant, &1u32);
         assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    }
+
+    // ── cancellation refund-path tests ───────────────────────────────────────
+
+    fn create_test_invoice(
+        client: &InvoiceContractClient,
+        env: &Env,
+    ) -> (Address, Address, u64) {
+        let merchant = Address::generate(env);
+        let customer = Address::generate(env);
+        let token = Address::generate(env);
+        let id = client.create_invoice(&merchant, &customer, &1_000_000i128, &token, &9999, &1);
+        (merchant, customer, id)
+    }
+
+    /// Cancelling a Pending invoice (no funds moved) succeeds and sets Cancelled.
+    /// Both merchant and customer are authorised to cancel.
+    #[test]
+    fn test_cancel_pending_invoice_no_fund_movement() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (merchant, _customer, id) = create_test_invoice(&client, &env);
+
+        client.cancel_invoiced(&id, &merchant);
+
+        let invoice = client.get_invoice(&id);
+        assert_eq!(invoice.status, InvoiceStatus::Cancelled);
+    }
+
+    /// Customer can also cancel a Pending invoice.
+    #[test]
+    fn test_cancel_pending_invoice_by_customer_succeeds() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (_merchant, customer, id) = create_test_invoice(&client, &env);
+
+        client.cancel_invoiced(&id, &customer);
+
+        let invoice = client.get_invoice(&id);
+        assert_eq!(invoice.status, InvoiceStatus::Cancelled);
+    }
+
+    /// Cancelling a Paid invoice initiates the refund path (→ RefundRequested).
+    /// Ensures funds are not left stuck with no valid state transition.
+    #[test]
+    fn test_cancel_paid_invoice_transitions_to_refund_requested() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (merchant, _customer, id) = create_test_invoice(&client, &env);
+
+        // Pay the invoice (funds are now escrowed).
+        client.mark_paids(&soroban_sdk::vec![&env, id]);
+        let after_pay = client.get_invoice(&id);
+        assert_eq!(after_pay.status, InvoiceStatus::Paid);
+
+        // Merchant cancels — must open the refund path, not leave funds stuck.
+        client.cancel_invoiced(&id, &merchant);
+
+        let after_cancel = client.get_invoice(&id);
+        assert_eq!(
+            after_cancel.status,
+            InvoiceStatus::RefundRequested,
+            "cancelling a paid invoice must initiate the refund path"
+        );
+    }
+
+    /// Cancelling an invoice where a refund is already in progress returns
+    /// AlreadyRefundRequested.
+    #[test]
+    fn test_cancel_refund_requested_invoice_returns_already_refund_requested() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (merchant, _customer, id) = create_test_invoice(&client, &env);
+
+        client.mark_paids(&soroban_sdk::vec![&env, id]);
+        // First cancel: opens refund path.
+        client.cancel_invoiced(&id, &merchant);
+        // Second cancel: refund already in progress.
+        let res = client.try_cancel_invoiced(&id, &merchant);
+        assert_eq!(res, Err(Ok(ContractError::AlreadyRefundRequested)));
+    }
+
+    /// Cancelling an already-Cancelled invoice returns InvoiceCancelled (terminal state).
+    #[test]
+    fn test_cancel_already_cancelled_invoice_returns_invoice_cancelled() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (merchant, _customer, id) = create_test_invoice(&client, &env);
+
+        client.cancel_invoiced(&id, &merchant);
+        let res = client.try_cancel_invoiced(&id, &merchant);
+        assert_eq!(res, Err(Ok(ContractError::InvoiceCancelled)));
+    }
+
+    /// A stranger (neither merchant nor customer) cannot cancel an invoice.
+    #[test]
+    fn test_cancel_by_stranger_returns_unauthorized() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (_merchant, _customer, id) = create_test_invoice(&client, &env);
+        let stranger = Address::generate(&env);
+
+        let res = client.try_cancel_invoiced(&id, &stranger);
+        assert_eq!(res, Err(Ok(ContractError::Unauthorized)));
+    }
+
+    /// Cancelling a non-existent invoice returns InvoiceNotFound.
+    #[test]
+    fn test_cancel_nonexistent_invoice_returns_not_found() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let caller = Address::generate(&env);
+
+        let res = client.try_cancel_invoiced(&9999u64, &caller);
+        assert_eq!(res, Err(Ok(ContractError::InvoiceNotFound)));
+    }
+
+    /// Cancelling when the contract is paused returns ContractPaused.
+    #[test]
+    fn test_cancel_when_paused_returns_contract_paused() {
+        let (env, cid, admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let (merchant, _customer, id) = create_test_invoice(&client, &env);
+
+        client.pause(&admin);
+        let res = client.try_cancel_invoiced(&id, &merchant);
+        assert_eq!(res, Err(Ok(ContractError::ContractPaused)));
     }
 }
