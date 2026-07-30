@@ -120,11 +120,14 @@ impl TreasuryContract {
         e.storage().instance().set(&DataKey::Threshold, &threshold);
         e.storage().instance().set(&DataKey::Paused, &false);
         e.storage().instance().set(&DataKey::NextSettlementId, &1u64);
+        let mut signer_list: Vec<Address> = Vec::new(&e);
         for (signer, weight) in signers.iter() {
             e.storage()
                 .instance()
                 .set(&DataKey::Signer(signer.clone()), &weight);
+            signer_list.push_back(signer.clone());
         }
+        e.storage().instance().set(&DataKey::SignerList, &signer_list);
         Ok(())
     }
 
@@ -149,7 +152,17 @@ impl TreasuryContract {
         Self::check_admin(&e, &admin)?;
         e.storage()
             .instance()
-            .set(&DataKey::Signer(signer), &weight);
+            .set(&DataKey::Signer(signer.clone()), &weight);
+        // Maintain the signer list so update_threshold can compute total weight.
+        let mut signer_list: Vec<Address> = e
+            .storage()
+            .instance()
+            .get(&DataKey::SignerList)
+            .unwrap_or_else(|| Vec::new(&e));
+        if !signer_list.contains(&signer) {
+            signer_list.push_back(signer);
+            e.storage().instance().set(&DataKey::SignerList, &signer_list);
+        }
         Ok(())
     }
 
@@ -411,12 +424,17 @@ impl TreasuryContract {
         if new_threshold == 0 {
             return Err(TreasuryError::InvalidThreshold);
         }
+        let threshold = new_threshold as u64;
+        // Reject if the requested threshold exceeds the sum of all signer weights.
+        let total_weight = Self::total_signer_weight(&e);
+        if threshold > total_weight {
+            return Err(TreasuryError::ThresholdExceedsWeight);
+        }
         let old_threshold: u64 = e
             .storage()
             .instance()
             .get(&DataKey::Threshold)
             .unwrap_or(0u64);
-        let threshold = new_threshold as u64;
         e.storage().instance().set(&DataKey::Threshold, &threshold);
         e.events().publish(
             (Symbol::new(&e, "threshold_updated"),),
@@ -852,6 +870,76 @@ mod tests {
         c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         let res = c.try_update_threshold(&admin, &0u32);
         assert_eq!(res, Err(Ok(TreasuryError::InvalidThreshold)));
+    }
+
+    #[test]
+    fn test_update_threshold_above_total_weight_rejected() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let s1 = soroban_sdk::Address::generate(&e);
+        let s2 = soroban_sdk::Address::generate(&e);
+        // total weight = 3 (s1=1, s2=2)
+        c.initialize(
+            &soroban_sdk::vec![&e, (s1.clone(), 1u64), (s2.clone(), 2u64)],
+            &1,
+            &admin,
+        );
+        // Attempt to set threshold to 4 > total weight 3
+        let res = c.try_update_threshold(&admin, &4u32);
+        assert_eq!(res, Err(Ok(TreasuryError::ThresholdExceedsWeight)));
+    }
+
+    #[test]
+    fn test_update_threshold_exactly_at_total_weight_succeeds() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let s1 = soroban_sdk::Address::generate(&e);
+        let s2 = soroban_sdk::Address::generate(&e);
+        // total weight = 3 (s1=1, s2=2)
+        c.initialize(
+            &soroban_sdk::vec![&e, (s1.clone(), 1u64), (s2.clone(), 2u64)],
+            &1,
+            &admin,
+        );
+        // Threshold == total weight should succeed
+        c.update_threshold(&admin, &3u32);
+        assert_eq!(c.get_threshold(), 3u64);
+    }
+
+    #[test]
+    fn test_update_threshold_below_total_weight_succeeds() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        // total weight = 5
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 5u64)], &1, &admin);
+        c.update_threshold(&admin, &3u32);
+        assert_eq!(c.get_threshold(), 3u64);
+    }
+
+    #[test]
+    fn test_update_threshold_reflects_set_signer_weight_increase() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        // initial total weight = 2
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 2u64)], &1, &admin);
+
+        // threshold=3 > total_weight=2 → rejected
+        let res = c.try_update_threshold(&admin, &3u32);
+        assert_eq!(res, Err(Ok(TreasuryError::ThresholdExceedsWeight)));
+
+        // Add a new signer with weight=2 → total_weight=4
+        let new_signer = soroban_sdk::Address::generate(&e);
+        c.set_signer(&admin, &new_signer, &2u64);
+
+        // Now threshold=3 ≤ total_weight=4 → should succeed
+        c.update_threshold(&admin, &3u32);
+        assert_eq!(c.get_threshold(), 3u64);
     }
 
     #[test]
