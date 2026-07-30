@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "invoice",
+    "settlement",
     "api-integration-tests",
 ]
 resolver = "2"
