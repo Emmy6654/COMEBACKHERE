@@ -12,6 +12,116 @@ const CONTRACT_NOT_FOUND: u32 = 6;
 const CONTRACT_UNAUTHORIZED: u32 = 1;
 const CONTRACT_NOT_PAID: u32 = 10;
 
+/// Maximum number of retry attempts for transient failures.
+const MAX_RETRIES: u32 = 3;
+/// Initial backoff delay in milliseconds.
+const INITIAL_BACKOFF_MS: u64 = 200;
+/// Maximum total wait (all sleep intervals combined) before giving up, in ms.
+const MAX_TOTAL_BACKOFF_MS: u64 = 30_000;
+
+// ---------------------------------------------------------------------------
+// Transient-error classification
+// ---------------------------------------------------------------------------
+
+/// Returns `true` when the error is likely transient and worth retrying:
+/// - Network-level errors (connection refused, timeouts, resets)
+/// - HTTP 5xx responses from the RPC node
+///
+/// 4xx responses, contract-level errors, and application logic errors are
+/// **not** retried because they will not resolve on their own.
+fn is_transient(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+
+    // Never retry contract-level or application-logic errors.
+    if msg.contains("NOT_FOUND")
+        || msg.contains("UNAUTHORIZED")
+        || msg.contains("NOT_PAID")
+        || msg.contains("Empty RPC result")
+    {
+        return false;
+    }
+
+    // reqwest errors: timeouts, connection failures, unexpected EOF, etc.
+    if let Some(re) = err.downcast_ref::<reqwest::Error>() {
+        return re.is_timeout()
+            || re.is_connect()
+            || re.is_request()
+            // 5xx status codes surfaced by reqwest
+            || re
+                .status()
+                .map(|s| s.is_server_error())
+                .unwrap_or(false);
+    }
+
+    // Catch-all: surface-level 5xx or network keyword in the message string.
+    msg.contains("5xx")
+        || msg.contains("500")
+        || msg.contains("502")
+        || msg.contains("503")
+        || msg.contains("504")
+        || msg.contains("connection")
+        || msg.contains("timeout")
+        || msg.contains("reset")
+        || msg.contains("timed out")
+        || msg.contains("broken pipe")
+}
+
+// ---------------------------------------------------------------------------
+// Retry wrapper
+// ---------------------------------------------------------------------------
+
+/// Execute `op` up to `MAX_RETRIES + 1` times, sleeping with exponential
+/// backoff between attempts whenever the error is transient.
+///
+/// Delays: 200 ms → 400 ms → 800 ms  (doubles each attempt, capped at
+/// MAX_TOTAL_BACKOFF_MS across all sleeps combined).
+async fn with_retry<F, Fut, T>(op: F) -> Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut delay_ms = INITIAL_BACKOFF_MS;
+    let mut total_waited_ms: u64 = 0;
+
+    for attempt in 0..=MAX_RETRIES {
+        match op().await {
+            Ok(val) => return Ok(val),
+            Err(err) => {
+                let is_last = attempt == MAX_RETRIES;
+                let will_exceed_budget =
+                    total_waited_ms + delay_ms > MAX_TOTAL_BACKOFF_MS;
+
+                if is_last || !is_transient(&err) || will_exceed_budget {
+                    return Err(err);
+                }
+
+                tracing_or_eprintln(attempt, delay_ms, &err);
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                total_waited_ms += delay_ms;
+                delay_ms = (delay_ms * 2).min(MAX_TOTAL_BACKOFF_MS - total_waited_ms + 1);
+            }
+        }
+    }
+    // Unreachable, but satisfies the compiler.
+    unreachable!()
+}
+
+/// Lightweight logging that works whether or not `tracing` is in scope.
+/// We avoid a hard dependency on the tracing crate here.
+#[inline]
+fn tracing_or_eprintln(attempt: u32, delay_ms: u64, err: &anyhow::Error) {
+    eprintln!(
+        "[soroban] transient error on attempt {}, retrying in {}ms: {}",
+        attempt + 1,
+        delay_ms,
+        err
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
 pub struct SorobanClient {
     pub rpc_url: String,
     pub contract_id: String,
@@ -32,6 +142,40 @@ impl SorobanClient {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Internal HTTP helpers (each wrapped with retry)
+    // ------------------------------------------------------------------
+
+    /// POST to the Soroban RPC endpoint and deserialize the JSON-RPC envelope.
+    async fn rpc_post(&self, req: &RpcRequest) -> Result<RpcResponse> {
+        let response = with_retry(|| async {
+            let http_resp = self
+                .http
+                .post(&self.rpc_url)
+                .json(&req)
+                .send()
+                .await?;
+
+            // Treat HTTP 5xx as a transient error so the retry wrapper fires.
+            if http_resp.status().is_server_error() {
+                let status = http_resp.status();
+                // Drain body to free connection.
+                let _ = http_resp.bytes().await;
+                return Err(anyhow!("RPC node returned HTTP {status}"));
+            }
+
+            let rpc_resp: RpcResponse = http_resp.json().await?;
+            Ok(rpc_resp)
+        })
+        .await?;
+
+        Ok(response)
+    }
+
+    // ------------------------------------------------------------------
+    // Public API
+    // ------------------------------------------------------------------
+
     /// Fetch invoice state from Soroban via get_invoice.
     pub async fn get_invoice(&self, invoice_id: u64) -> Result<InvoiceResponse> {
         let args_xdr = encode_u64_arg(invoice_id);
@@ -44,14 +188,7 @@ impl SorobanClient {
             }),
         };
 
-        let resp: RpcResponse = self
-            .http
-            .post(&self.rpc_url)
-            .json(&req)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let resp = self.rpc_post(&req).await?;
 
         if let Some(err) = resp.error {
             return Err(rpc_error_to_anyhow(&err));
@@ -69,14 +206,7 @@ impl SorobanClient {
             params: json!([]),
         };
 
-        let resp: RpcResponse = self
-            .http
-            .post(&self.rpc_url)
-            .json(&req)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let resp = self.rpc_post(&req).await?;
 
         if let Some(err) = resp.error {
             return Err(rpc_error_to_anyhow(&err));
@@ -89,13 +219,27 @@ impl SorobanClient {
 
     pub async fn check_horizon_health(&self) -> Result<()> {
         let health_url = format!("{}/health", self.horizon_url.trim_end_matches('/'));
-        let response = self.http.get(&health_url).send().await?;
 
-        if !response.status().is_success() {
-            return Err(anyhow!("Horizon health check failed with status {}", response.status()));
-        }
+        with_retry(|| async {
+            let response = self.http.get(&health_url).send().await?;
 
-        Ok(())
+            if response.status().is_server_error() {
+                let status = response.status();
+                let _ = response.bytes().await;
+                return Err(anyhow!("Horizon health check failed with HTTP {status}"));
+            }
+
+            if !response.status().is_success() {
+                // 4xx — not transient, propagate immediately.
+                return Err(anyhow!(
+                    "Horizon health check failed with status {}",
+                    response.status()
+                ));
+            }
+
+            Ok(())
+        })
+        .await
     }
 
     /// Submit a signed mark_paid transaction to Soroban.
@@ -126,14 +270,7 @@ impl SorobanClient {
             params: json!({ "transaction": signed_xdr }),
         };
 
-        let resp: RpcResponse = self
-            .http
-            .post(&self.rpc_url)
-            .json(&req)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let resp = self.rpc_post(&req).await?;
 
         if let Some(err) = resp.error {
             return Err(rpc_error_to_anyhow(&err));
@@ -181,14 +318,7 @@ impl SorobanClient {
             params: json!({ "transaction": signed_xdr }),
         };
 
-        let resp: RpcResponse = self
-            .http
-            .post(&self.rpc_url)
-            .json(&req)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let resp = self.rpc_post(&req).await?;
 
         if let Some(err) = resp.error {
             return Err(rpc_error_to_anyhow(&err));
@@ -238,14 +368,7 @@ impl SorobanClient {
             params: json!({ "transaction": signed_xdr }),
         };
 
-        let resp: RpcResponse = self
-            .http
-            .post(&self.rpc_url)
-            .json(&req)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let resp = self.rpc_post(&req).await?;
 
         if let Some(err) = resp.error {
             return Err(rpc_error_to_anyhow(&err));
@@ -265,6 +388,10 @@ impl SorobanClient {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn rpc_error_to_anyhow(err: &Value) -> anyhow::Error {
     let code = err
@@ -334,4 +461,235 @@ fn encode_u64_arg(id: u64) -> String {
 
 fn build_invoke_xdr(contract_id: &str, function: &str, args_xdr: &str) -> String {
     format!("INVOKE:{}:{}:{}", contract_id, function, args_xdr)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        routing::post,
+        Router,
+    };
+    use serde_json::json;
+    use std::{
+        net::SocketAddr,
+        sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        },
+    };
+    use tokio::net::TcpListener;
+
+    // -----------------------------------------------------------------------
+    // Unit tests for `is_transient`
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn transient_false_for_not_found() {
+        let err = anyhow!("NOT_FOUND");
+        assert!(!is_transient(&err));
+    }
+
+    #[test]
+    fn transient_false_for_unauthorized() {
+        let err = anyhow!("UNAUTHORIZED");
+        assert!(!is_transient(&err));
+    }
+
+    #[test]
+    fn transient_false_for_not_paid() {
+        let err = anyhow!("NOT_PAID");
+        assert!(!is_transient(&err));
+    }
+
+    #[test]
+    fn transient_false_for_empty_rpc_result() {
+        let err = anyhow!("Empty RPC result");
+        assert!(!is_transient(&err));
+    }
+
+    #[test]
+    fn transient_true_for_5xx_message() {
+        let err = anyhow!("RPC node returned HTTP 503");
+        assert!(is_transient(&err));
+    }
+
+    #[test]
+    fn transient_true_for_timeout_message() {
+        let err = anyhow!("request timed out");
+        assert!(is_transient(&err));
+    }
+
+    #[test]
+    fn transient_true_for_connection_message() {
+        let err = anyhow!("connection refused");
+        assert!(is_transient(&err));
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration-style retry tests using a real local HTTP mock server
+    // -----------------------------------------------------------------------
+
+    /// Spawn a mock RPC server.
+    ///
+    /// - For the first `fail_count` requests it returns HTTP `fail_status`.
+    /// - After that it returns a valid JSON-RPC success response.
+    async fn spawn_mock_rpc(fail_count: u32, fail_status: u16) -> (SocketAddr, Arc<AtomicU32>) {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+
+        let app = Router::new().route(
+            "/soroban/rpc",
+            post(move |body: axum::extract::Json<serde_json::Value>| {
+                let counter = counter_clone.clone();
+                let method = body
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                async move {
+                    let call_num = counter.fetch_add(1, Ordering::SeqCst);
+                    if call_num < fail_count {
+                        return axum::http::Response::builder()
+                            .status(fail_status)
+                            .body(axum::body::Body::empty())
+                            .unwrap();
+                    }
+
+                    // Return a valid response for whichever method was called.
+                    let result = if method == "simulateTransaction" {
+                        json!({
+                            "map": [
+                                {"key": "id", "val": 1},
+                                {"key": "merchant", "val": "GMERCHANT"},
+                                {"key": "status", "val": 0}
+                            ]
+                        })
+                    } else {
+                        json!({ "sequence": 42 })
+                    };
+
+                    axum::http::Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .body(axum::body::Body::from(
+                            json!({ "jsonrpc": "2.0", "id": 1, "result": result }).to_string(),
+                        ))
+                        .unwrap()
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (addr, counter)
+    }
+
+    /// Succeeds after two 503s — verifies that retries actually happen on 5xx.
+    #[tokio::test]
+    async fn retries_on_5xx_and_eventually_succeeds() {
+        let (addr, counter) = spawn_mock_rpc(2, 503).await;
+        let client = SorobanClient::new(
+            format!("http://{addr}/soroban/rpc"),
+            "CONTRACT_ID".to_string(),
+            format!("http://{addr}"),
+        );
+
+        let result = client.check_rpc_health().await;
+        assert!(result.is_ok(), "expected success after retries: {:?}", result);
+        // Server was hit 3 times: 2 failures + 1 success.
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    /// After MAX_RETRIES + 1 consecutive 503s the client gives up and surfaces the error.
+    #[tokio::test]
+    async fn gives_up_after_max_retries_on_persistent_5xx() {
+        // fail_count > MAX_RETRIES so every attempt fails.
+        let (addr, counter) = spawn_mock_rpc(MAX_RETRIES + 10, 503).await;
+        let client = SorobanClient::new(
+            format!("http://{addr}/soroban/rpc"),
+            "CONTRACT_ID".to_string(),
+            format!("http://{addr}"),
+        );
+
+        let result = client.check_rpc_health().await;
+        assert!(result.is_err(), "expected failure after exhausting retries");
+        // Exactly MAX_RETRIES + 1 attempts should have been made.
+        assert_eq!(counter.load(Ordering::SeqCst), MAX_RETRIES + 1);
+    }
+
+    /// A 404 from the RPC endpoint is *not* retried (not a transient error).
+    #[tokio::test]
+    async fn does_not_retry_on_4xx() {
+        let (addr, counter) = spawn_mock_rpc(MAX_RETRIES + 10, 404).await;
+        let client = SorobanClient::new(
+            format!("http://{addr}/soroban/rpc"),
+            "CONTRACT_ID".to_string(),
+            format!("http://{addr}"),
+        );
+
+        let result = client.check_rpc_health().await;
+        // A 404 is treated as a non-transient error: the reqwest client will
+        // return the body (possibly empty), which gets parsed as an empty/invalid
+        // RpcResponse and surfaces as an error — but it should only try once.
+        assert!(result.is_err());
+        // Only 1 attempt should have been made — no retries on 4xx.
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    /// get_invoice succeeds after one 503, confirming retries work at the method level.
+    #[tokio::test]
+    async fn get_invoice_retries_on_5xx_and_succeeds() {
+        let (addr, counter) = spawn_mock_rpc(1, 503).await;
+        let client = SorobanClient::new(
+            format!("http://{addr}/soroban/rpc"),
+            "CONTRACT_ID".to_string(),
+            format!("http://{addr}"),
+        );
+
+        let result = client.get_invoice(1).await;
+        assert!(result.is_ok(), "expected get_invoice to succeed after retry: {:?}", result);
+        assert_eq!(counter.load(Ordering::SeqCst), 2); // 1 failure + 1 success
+    }
+
+    /// Contract-level NOT_FOUND error is never retried — only one call is made.
+    #[tokio::test]
+    async fn not_found_error_is_not_retried() {
+        // Mock: always returns a JSON-RPC error with code 6 (NOT_FOUND).
+        let app = Router::new().route(
+            "/soroban/rpc",
+            post(|| async {
+                axum::Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": { "code": 6, "message": "not found" }
+                }))
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = SorobanClient::new(
+            format!("http://{addr}/soroban/rpc"),
+            "CONTRACT_ID".to_string(),
+            format!("http://{addr}"),
+        );
+
+        let result = client.get_invoice(99).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("NOT_FOUND"), "unexpected error: {msg}");
+    }
 }
