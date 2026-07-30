@@ -122,6 +122,7 @@ impl ComplianceContract {
     }
 
     pub fn accept_admin(e: Env, new_admin: Address) -> Result<(), ContractError> {
+        check_not_paused(&e)?;
         new_admin.require_auth();
         let pending: Address = e
             .storage()
@@ -163,42 +164,28 @@ impl ComplianceContract {
         Ok(())
     }
 
-    /// Sweep a batch of addresses: removes storage entries for any `AllowedUntil`
-    /// entries whose expiry timestamp has already passed. Non-expired, permanently
-    /// allowed, blocked, or already-cleared addresses are silently skipped.
-    /// Returns the number of entries that were actually removed.
-    pub fn sweep_expired(e: Env, admin: Address, addresses: Vec<Address>) -> u32 {
+    pub fn pause(e: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();
-        let now = e.ledger().timestamp();
-        let mut swept: u32 = 0;
-        for addr in addresses.iter() {
-            let status: AddressStatus = e
-                .storage()
-                .instance()
-                .get(&DataKey::Status(addr.clone()))
-                .unwrap_or(AddressStatus::Cleared);
-            if let AddressStatus::AllowedUntil(until) = status {
-                if now >= until {
-                    e.storage()
-                        .instance()
-                        .remove(&DataKey::Status(addr.clone()));
-                    e.events()
-                        .publish((Symbol::new(&e, "address_swept"),), addr);
-                    swept += 1;
-                }
-            }
+        let stored_admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
         }
-        swept
-    }
-
-    pub fn pause(e: Env, admin: Address) {
-        admin.require_auth();
         e.storage().instance().set(&DataKey::Paused, &true);
+        e.events()
+            .publish((Symbol::new(&e, "contract_paused"),), ());
+        Ok(())
     }
 
-    pub fn unpause(e: Env, admin: Address) {
+    pub fn unpause(e: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();
+        let stored_admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
         e.storage().instance().set(&DataKey::Paused, &false);
+        e.events()
+            .publish((Symbol::new(&e, "contract_unpaused"),), ());
+        Ok(())
     }
 }
 
@@ -252,125 +239,134 @@ mod tests {
         assert!(c.is_allowed(&addr));
     }
 
-    // ── sweep_expired tests ──────────────────────────────────────────────────
+    // ── pause / unpause and admin guard tests ─────────────────────────────────
 
     #[test]
-    fn test_sweep_expired_removes_expired_entry_and_returns_count() {
-        let (e, cid, admin, addr) = setup(1001);
-        let c = ComplianceContractClient::new(&e, &cid);
-        // Grant a time-boxed allowance that has already expired (until=1000, now=1001)
-        c.allow_address_until(&admin, &addr, &1000u64);
-        assert!(!c.is_allowed(&addr)); // already expired
+    fn test_pause_emits_event() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
 
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
-        assert_eq!(swept, 1);
+        c.pause(&admin);
 
-        // After sweep the entry should be cleared
-        assert!(matches!(
-            c.get_address_status(&addr),
-            AddressStatus::Cleared
-        ));
+        let all_events = e.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (contract_id, "contract_paused".into())),
+            "contract_paused event should be emitted"
+        );
     }
 
     #[test]
-    fn test_sweep_expired_skips_non_expired_entry() {
-        let (e, cid, admin, addr) = setup(500);
-        let c = ComplianceContractClient::new(&e, &cid);
-        // Allowance expires at 2000, now=500 → not yet expired
-        c.allow_address_until(&admin, &addr, &2000u64);
-        assert!(c.is_allowed(&addr));
+    fn test_unpause_emits_event() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
 
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
-        assert_eq!(swept, 0);
+        c.pause(&admin);
+        c.unpause(&admin);
 
-        // Entry still present and still allowed
-        assert!(c.is_allowed(&addr));
+        let all_events = e.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (contract_id, "contract_unpaused".into())),
+            "contract_unpaused event should be emitted"
+        );
     }
 
     #[test]
-    fn test_sweep_expired_at_exact_boundary_removes_entry() {
-        let (e, cid, admin, addr) = setup(1000);
-        let c = ComplianceContractClient::new(&e, &cid);
-        // now == until → is_allowed is already false at the boundary
-        c.allow_address_until(&admin, &addr, &1000u64);
-        assert!(!c.is_allowed(&addr));
+    fn test_pause_unauthorized_fails() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let non_admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
 
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
-        assert_eq!(swept, 1);
-        assert!(matches!(
-            c.get_address_status(&addr),
-            AddressStatus::Cleared
-        ));
+        let res = c.try_pause(&non_admin);
+        assert_eq!(res, Err(Ok(ContractError::Unauthorized)));
     }
 
     #[test]
-    fn test_sweep_expired_skips_permanently_allowed_address() {
-        let (e, cid, admin, addr) = setup(9999);
-        let c = ComplianceContractClient::new(&e, &cid);
+    fn test_unpause_unauthorized_fails() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let non_admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+        let res = c.try_unpause(&non_admin);
+        assert_eq!(res, Err(Ok(ContractError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_accept_admin_when_paused_fails() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let new_admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+        let res = c.try_accept_admin(&new_admin);
+        assert_eq!(res, Err(Ok(ContractError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_mutating_entrypoints_blocked_when_paused() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let addr = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+
+        assert_eq!(
+            c.try_allow_address(&admin, &addr),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            c.try_block_address(&admin, &addr),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            c.try_allow_address_until(&admin, &addr, &1000u64),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            c.try_clear_address(&admin, &addr),
+            Err(Ok(ContractError::ContractPaused))
+        );
+    }
+
+    #[test]
+    fn test_readonly_entrypoints_work_when_paused() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let addr = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
         c.allow_address(&admin, &addr);
+        c.pause(&admin);
 
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
-        assert_eq!(swept, 0);
         assert!(c.is_allowed(&addr));
-    }
-
-    #[test]
-    fn test_sweep_expired_skips_blocked_address() {
-        let (e, cid, admin, addr) = setup(9999);
-        let c = ComplianceContractClient::new(&e, &cid);
-        c.block_address(&admin, &addr);
-
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
-        assert_eq!(swept, 0);
-        assert!(matches!(
-            c.get_address_status(&addr),
-            AddressStatus::Blocked
-        ));
-    }
-
-    #[test]
-    fn test_sweep_expired_skips_cleared_address() {
-        let (e, cid, admin, addr) = setup(9999);
-        let c = ComplianceContractClient::new(&e, &cid);
-        // addr has no status (Cleared by default)
-
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
-        assert_eq!(swept, 0);
-    }
-
-    #[test]
-    fn test_sweep_expired_batch_mixed_addresses() {
-        let (e, cid, admin, _) = setup(1500);
-        let c = ComplianceContractClient::new(&e, &cid);
-
-        let expired1 = Address::generate(&e);
-        let expired2 = Address::generate(&e);
-        let live = Address::generate(&e);
-        let permanent = Address::generate(&e);
-
-        // expired: until=1000 < now=1500
-        c.allow_address_until(&admin, &expired1, &1000u64);
-        c.allow_address_until(&admin, &expired2, &500u64);
-        // live: until=9000 > now=1500
-        c.allow_address_until(&admin, &live, &9000u64);
-        // permanent allow
-        c.allow_address(&admin, &permanent);
-
-        let batch = soroban_sdk::vec![&e, expired1.clone(), expired2.clone(), live.clone(), permanent.clone()];
-        let swept = c.sweep_expired(&admin, &batch);
-        assert_eq!(swept, 2);
-
-        assert!(matches!(c.get_address_status(&expired1), AddressStatus::Cleared));
-        assert!(matches!(c.get_address_status(&expired2), AddressStatus::Cleared));
-        assert!(c.is_allowed(&live));
-        assert!(c.is_allowed(&permanent));
-    }
-
-    #[test]
-    fn test_sweep_expired_empty_batch_returns_zero() {
-        let (e, cid, admin, _) = setup(1000);
-        let c = ComplianceContractClient::new(&e, &cid);
-        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e]);
-        assert_eq!(swept, 0);
+        let status = c.get_address_status(&addr);
+        assert!(matches!(status, AddressStatus::Allowed));
     }
 }

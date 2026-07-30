@@ -19,6 +19,7 @@ artifacts/addresses.json
 coverage/
 
 # Test snapshots & reports
+**/test_snapshots/
 **/__snapshots__/
 **/*.snap
 test-results/
