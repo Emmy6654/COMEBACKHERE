@@ -11,6 +11,15 @@ use crate::{
     types::{DependencyHealth, HealthStatus, RpcHealthResponse},
 };
 
+#[utoipa::path(
+    get,
+    path = "/health/rpc",
+    responses(
+        (status = 200, description = "All dependencies healthy", body = inline(RpcHealthResponse)),
+        (status = 503, description = "One or more dependencies degraded", body = inline(RpcHealthResponse))
+    ),
+    tag = "health"
+)]
 pub async fn get_rpc_health(
     State(client): State<Arc<SorobanClient>>,
 ) -> impl IntoResponse {
@@ -82,13 +91,17 @@ mod tests {
                 "/soroban/rpc",
                 post(move || async move {
                     if healthy {
-                        axum::Json(json!({
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "result": { "sequence": 42 }
-                        }))
+                        (
+                            StatusCode::OK,
+                            axum::Json(json!({
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "result": { "sequence": 42 }
+                            })),
+                        )
+                            .into_response()
                     } else {
-                        StatusCode::INTERNAL_SERVER_ERROR
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
                 }),
             )
@@ -96,18 +109,17 @@ mod tests {
                 "/health",
                 get(move || async move {
                     if healthy {
-                        StatusCode::OK
+                        StatusCode::OK.into_response()
                     } else {
-                        StatusCode::SERVICE_UNAVAILABLE
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
                     }
                 }),
-            )
-            .route("/health/rpc", get(get_rpc_health));
+            );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         addr
@@ -129,7 +141,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let health_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
@@ -154,7 +166,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let health_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
