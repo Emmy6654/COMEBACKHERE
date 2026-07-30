@@ -23,6 +23,7 @@ pub enum ContractError {
     GraceWindowNotExpired = 12,
     DuplicateNonce = 13,
     TreasuryNotConfigured = 14,
+    NotAParty = 15,
 }
 
 #[contracttype]
@@ -520,11 +521,14 @@ impl InvoiceContract {
         check_not_paused(&env)?;
         claimant.require_auth();
 
-        // Ensure invoice exists.
-        env.storage()
+        let invoice = env
+            .storage()
             .persistent()
             .get::<DataKey, Invoice>(&DataKey::Invoice(invoice_id))
             .ok_or(ContractError::InvoiceNotFound)?;
+        if claimant != invoice.merchant && claimant != invoice.customer {
+            return Err(ContractError::NotAParty);
+        }
 
         let treasury: Address = env
             .storage()
@@ -821,7 +825,7 @@ mod tests {
 
     #[test]
     fn test_raise_dispute_places_settlement_on_hold() {
-        let (env, invoice_cid, treasury_cid, _admin, claimant) = setup_with_treasury(1000);
+        let (env, invoice_cid, treasury_cid, _admin, _claimant) = setup_with_treasury(1000);
         let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
         let treasury_client = TreasuryStubClient::new(&env, &treasury_cid);
 
@@ -831,14 +835,14 @@ mod tests {
         let invoice_id =
             invoice_client.create_invoice(&merchant, &customer, &1000i128, &token, &9999, &1);
 
-        invoice_client.raise_dispute(&invoice_id, &1u64, &claimant, &1u32);
+        invoice_client.raise_dispute(&invoice_id, &1u64, &merchant, &1u32);
 
         assert!(treasury_client.was_held(&1u64), "settlement should be on hold");
     }
 
     #[test]
     fn test_raise_dispute_emits_event() {
-        let (env, invoice_cid, _treasury_cid, _admin, claimant) = setup_with_treasury(1000);
+        let (env, invoice_cid, _treasury_cid, _admin, _claimant) = setup_with_treasury(1000);
         let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
 
         let merchant = Address::generate(&env);
@@ -847,7 +851,7 @@ mod tests {
         let invoice_id =
             invoice_client.create_invoice(&merchant, &customer, &500i128, &token, &9999, &1);
 
-        invoice_client.raise_dispute(&invoice_id, &2u64, &claimant, &1u32);
+        invoice_client.raise_dispute(&invoice_id, &2u64, &merchant, &1u32);
 
         // invoice_created + dispute_raised = at least 2 events
         let all_events = env.events().all();

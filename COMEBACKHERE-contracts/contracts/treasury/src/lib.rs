@@ -57,6 +57,7 @@ pub enum TreasuryError {
     InvalidThreshold = 6,
     DuplicateSigner = 7,
     InvalidWeightSum = 8,
+    NotSettlementParty = 9,
 }
 
 /// Storage keys for Treasury contract instance state.
@@ -434,7 +435,11 @@ impl TreasuryContract {
     ) -> Result<(), TreasuryError> {
         check_not_paused(&e)?;
         signer.require_auth();
-        let mut settlement = Self::get_settlement_internal(&e, settlement_id);
+        let settlement = Self::get_settlement_internal(&e, settlement_id);
+        if signer != settlement.merchant {
+            return Err(TreasuryError::NotSettlementParty);
+        }
+        let mut settlement = settlement;
         settlement.status = SettlementStatus::OnHold;
         e.storage()
             .instance()
