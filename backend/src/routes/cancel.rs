@@ -1,10 +1,9 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
-use std::sync::Arc;
 
 use crate::extractors::ValidatedBody;
 use crate::soroban::SorobanClient;
@@ -26,57 +25,91 @@ use crate::types::{CancelRequest, CancelResponse, ErrorResponse};
     tag = "cancel"
 )]
 pub async fn cancel_invoice(
-    State(client): State<Arc<SorobanClient>>,
+    State(state): State<AppState>,
     Path(id): Path<u64>,
     ValidatedBody(body): ValidatedBody<CancelRequest>,
 ) -> impl IntoResponse {
-    match client.cancel_invoice(id, &body.merchant, &body.signed_xdr).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
+    // ── Idempotency check ────────────────────────────────────────────────────
+    let idem_key = headers
+        .get("Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if let Some(ref key) = idem_key {
+        let store_key = IdempotencyStore::make_key("cancel", id, key);
+        if let Some(cached) = state.idempotency.get(&store_key) {
+            let status = StatusCode::from_u16(cached.status).unwrap_or(StatusCode::OK);
+            return (status, Json(cached.body)).into_response();
+        }
+    }
+
+    // ── Process the cancellation ─────────────────────────────────────────────
+    let result = state.client.cancel_invoice(id, &body.merchant, &body.signed_xdr).await;
+
+    let (status, body_json) = match result {
+        Ok(resp) => (StatusCode::OK, serde_json::json!(resp)),
         Err(e) if e.to_string().contains("UNAUTHORIZED") => (
             StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
+            serde_json::json!(ErrorResponse {
                 error: "Only the invoice merchant is authorised to cancel this invoice"
                     .to_string(),
                 code: Some(1),
             }),
-        )
-            .into_response(),
+        ),
         Err(e) if e.to_string().contains("NOT_FOUND") => (
             StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
+            serde_json::json!(ErrorResponse {
                 error: format!("Invoice {} not found", id),
                 code: Some(4),
             }),
-        )
-            .into_response(),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
+            serde_json::json!(ErrorResponse {
                 error: e.to_string(),
                 code: None,
             }),
-        )
-            .into_response(),
+        ),
+    };
+
+    // ── Cache the result ─────────────────────────────────────────────────────
+    if let Some(ref key) = idem_key {
+        let store_key = IdempotencyStore::make_key("cancel", id, key);
+        state.idempotency.insert(store_key, status.as_u16(), body_json.clone());
     }
+
+    (status, Json(body_json)).into_response()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::idempotency::IdempotencyStore;
     use crate::routes::invoices::get_invoice;
     use crate::routes::pay::pay_invoice;
+    use crate::soroban::SorobanClient;
     use axum::{
         routing::{get, post},
         Router,
     };
     use axum_test::TestServer;
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    fn make_app(client: SorobanClient) -> Router {
+    fn make_app() -> Router {
+        let state = AppState {
+            client: Arc::new(SorobanClient::new(
+                "http://127.0.0.1:19999/soroban/rpc".to_string(),
+                "CONTRACT_ID".to_string(),
+                "https://horizon.stellar.org".to_string(),
+            )),
+            idempotency: IdempotencyStore::new(Duration::from_secs(86_400)),
+        };
         Router::new()
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/pay", post(pay_invoice))
             .route("/invoices/:id/cancel", post(cancel_invoice))
-            .with_state(Arc::new(client))
+            .with_state(state)
     }
 
     #[tokio::test]
@@ -136,7 +169,6 @@ mod tests {
                 "signed_xdr": "AAAA=="
             }))
             .await;
-
         assert!(
             resp.status_code() == StatusCode::INTERNAL_SERVER_ERROR
                 || resp.status_code() == StatusCode::NOT_FOUND

@@ -5,6 +5,7 @@ mod types;
 
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
+use std::time::Duration;
 
 use rate_limiter::{new_store, RateLimitConfig, RateLimiterLayer};
 use routes::{
@@ -46,7 +47,11 @@ async fn main() {
     let horizon_url = std::env::var("HORIZON_API_URL")
         .unwrap_or_else(|_| "https://horizon.stellar.org".to_string());
 
-    let client = Arc::new(SorobanClient::new(rpc_url, contract_id, horizon_url));
+    let state = AppState {
+        client: Arc::new(SorobanClient::new(rpc_url, contract_id, horizon_url)),
+        // 24-hour TTL for idempotency keys (matches common API gateway defaults).
+        idempotency: IdempotencyStore::new(Duration::from_secs(86_400)),
+    };
 
     // Rate-limiter layer: config is read from RATE_LIMIT_POINTS / RATE_LIMIT_DURATION
     // (defaults: 60 requests per 60-second window, per IP).
