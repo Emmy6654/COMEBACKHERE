@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, IntoVal};
 
 const MIN_AMOUNT_STROOPS: u64 = 10_000_000;
 
@@ -20,6 +20,7 @@ pub enum InvoiceError {
     NotPaid = 10,
     AmountPrecision = 12,
     DuplicateNonce = 13,
+    AddressBlocked = 14,
 }
 
 #[contracttype]
@@ -51,6 +52,7 @@ pub enum DataKey {
     Invoice(u64),
     NextId,
     Nonce(Address, u64),
+    ComplianceContract,
 }
 
 #[contract]
@@ -151,6 +153,23 @@ impl InvoiceContract {
         if env.ledger().timestamp() >= invoice.expires_at {
             return Err(InvoiceError::Expired);
         }
+
+        // Compliance check: reject if payer is blocked
+        let compliance: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ComplianceContract);
+        if let Some(compliance) = compliance {
+            let is_allowed: bool = env.invoke_contract(
+                &compliance,
+                &soroban_sdk::Symbol::new(&env, "is_allowed"),
+                soroban_sdk::vec![&env, payer.clone().into_val(&env)],
+            );
+            if !is_allowed {
+                return Err(InvoiceError::AddressBlocked);
+            }
+        }
+
         invoice.status = InvoiceStatus::Paid;
         env.storage()
             .instance()
@@ -207,6 +226,27 @@ impl InvoiceContract {
             return Err(InvoiceError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Configure the compliance contract address (admin only).
+    pub fn set_compliance(
+        env: Env,
+        admin: Address,
+        compliance: Address,
+    ) -> Result<(), InvoiceError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap();
+        if stored != admin {
+            return Err(InvoiceError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ComplianceContract, &compliance);
         Ok(())
     }
 }
@@ -386,5 +426,102 @@ mod tests {
         c.pause(&admin);
         let res = c.try_create_invoice(&merchant, &10_000_000u64, &10_000_000u64, &3600u64, &1u64);
         assert_eq!(res, Err(Ok(InvoiceError::ContractPaused)));
+    }
+
+    // ── compliance check tests ─────────────────────────────────────────────
+
+    mod compliance_stub {
+        use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+        #[contracttype]
+        pub enum StubKey {
+            Blocked(Address),
+        }
+
+        #[contract]
+        pub struct ComplianceStub;
+
+        #[contractimpl]
+        impl ComplianceStub {
+            pub fn is_allowed(e: Env, addr: Address) -> bool {
+                !e.storage()
+                    .instance()
+                    .get(&StubKey::Blocked(addr))
+                    .unwrap_or(false)
+            }
+
+            pub fn block(e: Env, addr: Address) {
+                e.storage()
+                    .instance()
+                    .set(&StubKey::Blocked(addr), &true);
+            }
+        }
+    }
+
+    use compliance_stub::{ComplianceStub, ComplianceStubClient};
+
+    fn setup_with_compliance() -> (Env, Address, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let invoice_cid = env.register_contract(None, InvoiceContract);
+        let compliance_cid = env.register_contract(None, ComplianceStub);
+        let invoice_client = InvoiceContractClient::new(&env, &invoice_cid);
+        invoice_client.initialize(&admin);
+        invoice_client.set_compliance(&admin, &compliance_cid);
+        env.ledger().set_timestamp(1000);
+        (env, invoice_cid, compliance_cid, admin)
+    }
+
+    #[test]
+    fn test_pay_invoice_blocked_payer_rejected() {
+        let (env, cid, compliance_cid, _admin) = setup_with_compliance();
+        let c = InvoiceContractClient::new(&env, &cid);
+        let compliance_c = ComplianceStubClient::new(&env, &compliance_cid);
+
+        let merchant = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        let id = c.create_invoice(&merchant, &10_000_000u64, &10_000_000u64, &3600u64, &1u64);
+
+        // Block the payer
+        compliance_c.block(&payer);
+
+        let res = c.try_pay_invoice(&payer, &id);
+        assert_eq!(res, Err(Ok(InvoiceError::AddressBlocked)));
+    }
+
+    #[test]
+    fn test_pay_invoice_allowed_payer_passes() {
+        let (env, cid, _compliance_cid, _admin) = setup_with_compliance();
+        let c = InvoiceContractClient::new(&env, &cid);
+
+        let merchant = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        let id = c.create_invoice(&merchant, &10_000_000u64, &10_000_000u64, &3600u64, &1u64);
+
+        // Payer not blocked → payment succeeds
+        c.pay_invoice(&payer, &id);
+
+        let invoice = c.get_invoice(&id);
+        assert_eq!(invoice.status, InvoiceStatus::Paid);
+    }
+
+    #[test]
+    fn test_pay_invoice_no_compliance_passes() {
+        let (env, cid, _admin) = setup();
+        let c = InvoiceContractClient::new(&env, &cid);
+
+        let merchant = Address::generate(&env);
+        let payer = Address::generate(&env);
+
+        let id = c.create_invoice(&merchant, &10_000_000u64, &10_000_000u64, &3600u64, &1u64);
+
+        // No compliance configured → payment succeeds
+        c.pay_invoice(&payer, &id);
+
+        let invoice = c.get_invoice(&id);
+        assert_eq!(invoice.status, InvoiceStatus::Paid);
     }
 }
