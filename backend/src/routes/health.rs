@@ -11,6 +11,15 @@ use crate::{
     types::{DependencyHealth, HealthStatus, RpcHealthResponse},
 };
 
+#[utoipa::path(
+    get,
+    path = "/health/rpc",
+    responses(
+        (status = 200, description = "All dependencies healthy", body = inline(RpcHealthResponse)),
+        (status = 503, description = "One or more dependencies degraded", body = inline(RpcHealthResponse))
+    ),
+    tag = "health"
+)]
 pub async fn get_rpc_health(
     State(client): State<Arc<SorobanClient>>,
 ) -> impl IntoResponse {
@@ -110,7 +119,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         addr

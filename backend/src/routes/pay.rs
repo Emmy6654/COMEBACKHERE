@@ -6,13 +6,29 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::extractors::ValidatedBody;
 use crate::soroban::SorobanClient;
 use crate::types::{ErrorResponse, PayRequest};
 
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/pay",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = PayRequest,
+    responses(
+        (status = 200, description = "Payment successful", body = serde_json::Value),
+        (status = 403, description = "Payer not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "pay"
+)]
 pub async fn pay_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,
-    Json(body): Json<PayRequest>,
+    ValidatedBody(body): ValidatedBody<PayRequest>,
 ) -> impl IntoResponse {
     match client.pay_invoice(id, &body.payer, &body.signed_xdr).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
@@ -70,7 +86,8 @@ mod tests {
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();
 
-        // No JSON body → 415 Unsupported Media Type or 422 Unprocessable Entity
+        // No JSON body → 415 Unsupported Media Type (no Content-Type header)
+        // or 422 Unprocessable Entity (JSON Content-Type but invalid body)
         let resp = server.post("/invoices/1/pay").await;
         assert!(
             resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY
@@ -78,6 +95,25 @@ mod tests {
             "expected 415 or 422, got {}",
             resp.status_code()
         );
+    }
+
+    #[tokio::test]
+    async fn test_pay_invoice_malformed_body_returns_422() {
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
+        // Malformed (non-JSON) body → 422 Unprocessable Entity
+        let resp = server
+            .post("/invoices/1/pay")
+            .content_type("application/json")
+            .bytes(axum::body::Bytes::from_static(b"not-valid-json{{"))
+            .await;
+        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
