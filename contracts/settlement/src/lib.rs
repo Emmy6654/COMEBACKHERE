@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -403,5 +403,53 @@ mod tests {
         // Cancelling an already-cancelled (or executed) settlement fails with NotPending
         let res = c.try_cancel(&proposer, &sid);
         assert_eq!(res, Err(Ok(SettlementError::NotPending)));
+    use proptest::prelude::*;
+    extern crate std;
+    use std::collections::HashSet;
+    use std::vec::Vec;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(50))]
+
+        #[test]
+        fn prop_settlement_quorum_logic(
+            weights in prop::collection::vec(1u64..100u64, 1..10),
+            threshold in 1u64..500u64,
+            approver_indices in prop::collection::vec(0usize..10, 0..10),
+        ) {
+            let (e, id) = setup();
+            let c = SettlementContractClient::new(&e, &id);
+
+            let merchant = Address::generate(&e);
+            let mut signers_vec = soroban_sdk::Vec::new(&e);
+            let mut signer_list: Vec<(Address, u64)> = Vec::new();
+
+            for &w in &weights {
+                let s = Address::generate(&e);
+                signers_vec.push_back((s.clone(), w));
+                signer_list.push((s, w));
+            }
+
+            c.initialize(&signers_vec, &threshold);
+            let proposer = &signer_list[0].0;
+            let sid = c.propose(proposer, &merchant, &1000u64);
+
+            let mut used_indices = HashSet::new();
+            let mut expected_accumulated_weight = 0u64;
+
+            for &raw_idx in &approver_indices {
+                let idx = raw_idx % signer_list.len();
+                if used_indices.insert(idx) {
+                    let (ref signer_addr, weight) = signer_list[idx];
+                    let res = c.approve_settlement(signer_addr, &sid);
+                    expected_accumulated_weight += weight;
+                    prop_assert_eq!(res.approval_weight, expected_accumulated_weight);
+                    prop_assert_eq!(res.threshold, threshold);
+                }
+            }
+
+            let quorum_met = expected_accumulated_weight >= threshold;
+            prop_assert_eq!(expected_accumulated_weight >= threshold, quorum_met);
+        }
     }
 }

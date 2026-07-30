@@ -3,5 +3,6 @@ members = [
     "invoice",
     "settlement",
     "api-integration-tests",
+    "settlement",
 ]
 resolver = "2"
