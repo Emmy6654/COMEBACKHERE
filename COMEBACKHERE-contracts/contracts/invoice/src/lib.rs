@@ -475,6 +475,7 @@ impl InvoiceContract {
     /// # Errors
     /// - [`ContractError::Unauthorized`] if `caller` is not the admin.
     pub fn set_treasury(env: Env, caller: Address, treasury: Address) -> Result<(), ContractError> {
+        check_not_paused(&env)?;
         check_admin(&env, &caller)?;
         env.storage()
             .persistent()

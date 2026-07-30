@@ -351,6 +351,10 @@ impl TreasuryContract {
     pub fn pause(e: Env, admin: Address) -> Result<(), TreasuryError> {
         Self::check_admin(&e, &admin)?;
         e.storage().instance().set(&DataKey::Paused, &true);
+        e.events().publish(
+            (Symbol::new(&e, "contract_paused"),),
+            (),
+        );
         Ok(())
     }
 
@@ -365,6 +369,10 @@ impl TreasuryContract {
     pub fn unpause(e: Env, admin: Address) -> Result<(), TreasuryError> {
         Self::check_admin(&e, &admin)?;
         e.storage().instance().set(&DataKey::Paused, &false);
+        e.events().publish(
+            (Symbol::new(&e, "contract_unpaused"),),
+            (),
+        );
         Ok(())
     }
 
