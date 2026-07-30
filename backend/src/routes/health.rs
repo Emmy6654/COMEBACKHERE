@@ -174,4 +174,61 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
+
+    /// Partial degradation: Soroban RPC is down but Horizon is healthy.
+    ///
+    /// Asserts:
+    /// - HTTP 503 is returned (overall status is Degraded).
+    /// - Response body identifies `soroban_rpc` as `Degraded`.
+    /// - Response body identifies `horizon` as `Healthy`.
+    #[tokio::test]
+    async fn returns_503_with_soroban_rpc_degraded_when_only_rpc_is_unhealthy() {
+        // rpc_healthy=false, horizon_healthy=true  →  partial degradation
+        let addr = spawn_test_server(false, true).await;
+        let client = Arc::new(SorobanClient::new(
+            format!("http://{addr}/soroban/rpc"),
+            "contract".to_string(),
+            format!("http://{addr}"),
+        ));
+
+        let app = Router::new()
+            .route("/health/rpc", get(get_rpc_health))
+            .with_state(client);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let health_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
+            .await
+            .unwrap();
+
+        // Overall status must be 503 because at least one dependency is degraded.
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body: serde_json::Value = response.json().await.unwrap();
+
+        // The overall status field should be "Degraded".
+        assert_eq!(
+            body["status"].as_str().unwrap(),
+            "Degraded",
+            "expected overall status to be Degraded, got: {body}"
+        );
+
+        // soroban_rpc dependency must be reported as Degraded.
+        assert_eq!(
+            body["dependencies"]["soroban_rpc"]["status"].as_str().unwrap(),
+            "Degraded",
+            "expected soroban_rpc to be Degraded, got: {body}"
+        );
+
+        // horizon dependency must still be reported as Healthy.
+        assert_eq!(
+            body["dependencies"]["horizon"]["status"].as_str().unwrap(),
+            "Healthy",
+            "expected horizon to be Healthy, got: {body}"
+        );
+    }
 }
