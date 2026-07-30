@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -163,6 +163,34 @@ impl ComplianceContract {
         Ok(())
     }
 
+    /// Sweep a batch of addresses: removes storage entries for any `AllowedUntil`
+    /// entries whose expiry timestamp has already passed. Non-expired, permanently
+    /// allowed, blocked, or already-cleared addresses are silently skipped.
+    /// Returns the number of entries that were actually removed.
+    pub fn sweep_expired(e: Env, admin: Address, addresses: Vec<Address>) -> u32 {
+        admin.require_auth();
+        let now = e.ledger().timestamp();
+        let mut swept: u32 = 0;
+        for addr in addresses.iter() {
+            let status: AddressStatus = e
+                .storage()
+                .instance()
+                .get(&DataKey::Status(addr.clone()))
+                .unwrap_or(AddressStatus::Cleared);
+            if let AddressStatus::AllowedUntil(until) = status {
+                if now >= until {
+                    e.storage()
+                        .instance()
+                        .remove(&DataKey::Status(addr.clone()));
+                    e.events()
+                        .publish((Symbol::new(&e, "address_swept"),), addr);
+                    swept += 1;
+                }
+            }
+        }
+        swept
+    }
+
     pub fn pause(e: Env, admin: Address) {
         admin.require_auth();
         e.storage().instance().set(&DataKey::Paused, &true);
@@ -222,5 +250,127 @@ mod tests {
         let (_e, c, admin, addr) = setup(9999);
         c.allow_address(&admin, &addr);
         assert!(c.is_allowed(&addr));
+    }
+
+    // ── sweep_expired tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_sweep_expired_removes_expired_entry_and_returns_count() {
+        let (e, cid, admin, addr) = setup(1001);
+        let c = ComplianceContractClient::new(&e, &cid);
+        // Grant a time-boxed allowance that has already expired (until=1000, now=1001)
+        c.allow_address_until(&admin, &addr, &1000u64);
+        assert!(!c.is_allowed(&addr)); // already expired
+
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
+        assert_eq!(swept, 1);
+
+        // After sweep the entry should be cleared
+        assert!(matches!(
+            c.get_address_status(&addr),
+            AddressStatus::Cleared
+        ));
+    }
+
+    #[test]
+    fn test_sweep_expired_skips_non_expired_entry() {
+        let (e, cid, admin, addr) = setup(500);
+        let c = ComplianceContractClient::new(&e, &cid);
+        // Allowance expires at 2000, now=500 → not yet expired
+        c.allow_address_until(&admin, &addr, &2000u64);
+        assert!(c.is_allowed(&addr));
+
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
+        assert_eq!(swept, 0);
+
+        // Entry still present and still allowed
+        assert!(c.is_allowed(&addr));
+    }
+
+    #[test]
+    fn test_sweep_expired_at_exact_boundary_removes_entry() {
+        let (e, cid, admin, addr) = setup(1000);
+        let c = ComplianceContractClient::new(&e, &cid);
+        // now == until → is_allowed is already false at the boundary
+        c.allow_address_until(&admin, &addr, &1000u64);
+        assert!(!c.is_allowed(&addr));
+
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
+        assert_eq!(swept, 1);
+        assert!(matches!(
+            c.get_address_status(&addr),
+            AddressStatus::Cleared
+        ));
+    }
+
+    #[test]
+    fn test_sweep_expired_skips_permanently_allowed_address() {
+        let (e, cid, admin, addr) = setup(9999);
+        let c = ComplianceContractClient::new(&e, &cid);
+        c.allow_address(&admin, &addr);
+
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
+        assert_eq!(swept, 0);
+        assert!(c.is_allowed(&addr));
+    }
+
+    #[test]
+    fn test_sweep_expired_skips_blocked_address() {
+        let (e, cid, admin, addr) = setup(9999);
+        let c = ComplianceContractClient::new(&e, &cid);
+        c.block_address(&admin, &addr);
+
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
+        assert_eq!(swept, 0);
+        assert!(matches!(
+            c.get_address_status(&addr),
+            AddressStatus::Blocked
+        ));
+    }
+
+    #[test]
+    fn test_sweep_expired_skips_cleared_address() {
+        let (e, cid, admin, addr) = setup(9999);
+        let c = ComplianceContractClient::new(&e, &cid);
+        // addr has no status (Cleared by default)
+
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e, addr.clone()]);
+        assert_eq!(swept, 0);
+    }
+
+    #[test]
+    fn test_sweep_expired_batch_mixed_addresses() {
+        let (e, cid, admin, _) = setup(1500);
+        let c = ComplianceContractClient::new(&e, &cid);
+
+        let expired1 = Address::generate(&e);
+        let expired2 = Address::generate(&e);
+        let live = Address::generate(&e);
+        let permanent = Address::generate(&e);
+
+        // expired: until=1000 < now=1500
+        c.allow_address_until(&admin, &expired1, &1000u64);
+        c.allow_address_until(&admin, &expired2, &500u64);
+        // live: until=9000 > now=1500
+        c.allow_address_until(&admin, &live, &9000u64);
+        // permanent allow
+        c.allow_address(&admin, &permanent);
+
+        let batch = soroban_sdk::vec![&e, expired1.clone(), expired2.clone(), live.clone(), permanent.clone()];
+        let swept = c.sweep_expired(&admin, &batch);
+        assert_eq!(swept, 2);
+
+        assert!(matches!(c.get_address_status(&expired1), AddressStatus::Cleared));
+        assert!(matches!(c.get_address_status(&expired2), AddressStatus::Cleared));
+        assert!(c.is_allowed(&live));
+        assert!(c.is_allowed(&permanent));
+    }
+
+    #[test]
+    fn test_sweep_expired_empty_batch_returns_zero() {
+        let (e, cid, admin, _) = setup(1000);
+        let c = ComplianceContractClient::new(&e, &cid);
+        let swept = c.sweep_expired(&admin, &soroban_sdk::vec![&e]);
+        assert_eq!(swept, 0);
     }
 }
