@@ -320,6 +320,51 @@ impl TreasuryContract {
         Ok(())
     }
 
+    /// Update the merchant (payout) address on a pending settlement.
+    ///
+    /// Only the current merchant of the settlement may call this.
+    /// The change takes effect immediately; execution will send funds
+    /// to the new address.
+    pub fn update_settlement_merchant(
+        e: Env,
+        merchant_caller: Address,
+        settlement_id: u64,
+        new_merchant: Address,
+    ) -> Result<(), TreasuryError> {
+        check_not_paused(&e)?;
+        merchant_caller.require_auth();
+
+        let mut settlement = Self::get_settlement_internal(&e, settlement_id);
+
+        if settlement.status != SettlementStatus::Pending {
+            return Err(TreasuryError::NotPending);
+        }
+        if settlement.merchant != merchant_caller {
+            return Err(TreasuryError::Unauthorized);
+        }
+
+        let old_merchant = settlement.merchant;
+        settlement.merchant = new_merchant;
+
+        e.storage()
+            .instance()
+            .set(&DataKey::Settlement(settlement_id), &settlement);
+
+        e.events().publish(
+            (Symbol::new(&e, "merchant_updated"), settlement_id),
+            (old_merchant, new_merchant),
+        );
+
+        Ok(())
+    }
+
+    /// Return the full settlement struct (query-only, no auth required).
+    pub fn get_settlement(e: Env, settlement_id: u64) -> Option<Settlement> {
+        e.storage()
+            .instance()
+            .get(&DataKey::Settlement(settlement_id))
+    }
+
     pub fn deposit(e: Env, from: Address, _amount: u64) -> Result<(), TreasuryError> {
         check_not_paused(&e)?;
         from.require_auth();
@@ -395,6 +440,9 @@ mod integration_settlement_multisig;
 
 #[cfg(test)]
 mod integration_dispute_lifecycle;
+
+#[cfg(test)]
+mod integration_update_merchant;
 
 #[cfg(test)]
 mod tests {
