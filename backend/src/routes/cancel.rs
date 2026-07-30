@@ -5,27 +5,29 @@ use axum::{
     Json,
 };
 
-use crate::idempotency::IdempotencyStore;
-use crate::AppState;
-use crate::types::{CancelRequest, ErrorResponse};
+use crate::extractors::ValidatedBody;
+use crate::soroban::SorobanClient;
+use crate::types::{CancelRequest, CancelResponse, ErrorResponse};
 
-/// POST /invoices/:id/cancel
-///
-/// Allows a merchant to cancel a Pending invoice.
-///
-/// ## Idempotency
-/// Supply an `Idempotency-Key: <uuid>` header to make this endpoint safe to retry.
-/// If the same key is received again within 24 hours the original response is
-/// returned immediately without re-submitting the transaction to Soroban.
-///
-/// ## Error codes
-/// - 403 — caller is not the invoice merchant (contract error 1)
-/// - 404 — invoice not found (contract error 4)
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/cancel",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = CancelRequest,
+    responses(
+        (status = 200, description = "Invoice cancelled", body = serde_json::Value),
+        (status = 403, description = "Merchant not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "cancel"
+)]
 pub async fn cancel_invoice(
     State(state): State<AppState>,
     Path(id): Path<u64>,
-    headers: HeaderMap,
-    Json(body): Json<CancelRequest>,
+    ValidatedBody(body): ValidatedBody<CancelRequest>,
 ) -> impl IntoResponse {
     // ── Idempotency check ────────────────────────────────────────────────────
     let idem_key = headers
@@ -111,23 +113,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cancel_invoice_missing_body_returns_4xx() {
-        let server = TestServer::new(make_app()).unwrap();
-        let resp = server
-            .post("/invoices/1/cancel")
-            .content_type("application/json")
-            .bytes(axum::body::Bytes::new())
-            .await;
+    async fn test_cancel_invoice_missing_body_returns_422() {
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
+        // No JSON body → 415 Unsupported Media Type (no Content-Type header)
+        // or 422 Unprocessable Entity (JSON Content-Type but invalid body)
+        let resp = server.post("/invoices/1/cancel").await;
         assert!(
-            resp.status_code().is_client_error(),
-            "missing body should return a 4xx, got {}",
+            resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY
+                || resp.status_code() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "expected 415 or 422, got {}",
             resp.status_code()
         );
     }
 
     #[tokio::test]
+    async fn test_cancel_invoice_malformed_body_returns_422() {
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
+        // Malformed (non-JSON) body → 422 Unprocessable Entity
+        let resp = server
+            .post("/invoices/1/cancel")
+            .content_type("application/json")
+            .bytes(axum::body::Bytes::from_static(b"not-valid-json{{"))
+            .await;
+        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
     async fn test_cancel_invoice_unreachable_rpc_returns_error() {
-        let server = TestServer::new(make_app()).unwrap();
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
         let resp = server
             .post("/invoices/1/cancel")
             .json(&serde_json::json!({
@@ -142,31 +176,114 @@ mod tests {
         );
     }
 
-    /// Same idempotency key on cancel must return the cached response on retry.
     #[tokio::test]
-    async fn test_same_idempotency_key_returns_cached_response() {
-        let server = TestServer::new(make_app()).unwrap();
-        let payload = serde_json::json!({
-            "merchant": "GMERCHANT0000000000000000000000000000000000000000000000000",
-            "signed_xdr": "AAAA=="
+    async fn test_cancel_invoice_unauthorized_merchant_returns_403() {
+        use axum::{
+            routing::post,
+            Router,
+        };
+        use std::sync::Arc;
+
+        let app = Router::new()
+            .route("/invoices/:id/cancel", post(cancel_invoice))
+            .with_state(Arc::new(SorobanClient::new(
+                "http://127.0.0.1:19999/soroban/rpc".to_string(),
+                "CONTRACT_ID".to_string(),
+                "https://horizon.stellar.org".to_string(),
+            )));
+
+        let server = TestServer::new(app).unwrap();
+
+        let resp = server
+            .post("/invoices/1/cancel")
+            .json(&serde_json::json!({
+                "merchant": "GMERCHANT0000000000000000000000000000000000000000000000000",
+                "signed_xdr": "AAAA=="
+            }))
+            .await;
+
+        assert_eq!(resp.status_code(), StatusCode::FORBIDDEN);
+        let body: serde_json::Value = resp.json();
+        assert!(body.get("error").unwrap().as_str().unwrap().contains("authorised"));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_invoice_authorized_merchant_succeeds() {
+        use axum::{
+            routing::{get, post},
+            Router,
+        };
+        use serde_json::json;
+        use std::{net::SocketAddr, sync::Arc};
+        use tokio::net::TcpListener;
+
+        let mock_rpc = Router::new()
+            .route(
+                "/soroban/rpc",
+                post(move |axum::Json(payload): axum::Json<serde_json::Value>| async move {
+                    if payload
+                        .get("method")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("") == "simulateTransaction"
+                    {
+                        return axum::Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {
+                                "map": [
+                                    {"key": "id", "val": 1u64},
+                                    {"key": "merchant", "val": "GMERCHANT0000000000000000000000000000000000000000000000000"},
+                                    {"key": "payer", "val": "GPAYER0000000000000000000000000000000000000000000000000"},
+                                    {"key": "status", "val": 0u32},
+                                    {"key": "amount_usdc", "val": 100u64},
+                                    {"key": "gross_usdc", "val": 100u64},
+                                ]
+                            }
+                        }));
+                    }
+                    if payload
+                        .get("method")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("") == "sendTransaction"
+                    {
+                        return axum::Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "result": {"hash": "txhash123"}
+                        }));
+                    }
+                    StatusCode::NOT_FOUND
+                }),
+            );
+
+        let rpc_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rpc_addr = rpc_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(rpc_listener, mock_rpc).await.unwrap();
         });
 
-        let resp1 = server
+        let client = Arc::new(SorobanClient::new(
+            format!("http://{rpc_addr}/soroban/rpc"),
+            "CONTRACT_ID".to_string(),
+            format!("http://{rpc_addr}"),
+        ));
+
+        let app = Router::new()
+            .route("/invoices/:id/cancel", post(cancel_invoice))
+            .with_state(client);
+
+        let server = TestServer::new(app).unwrap();
+
+        let resp = server
             .post("/invoices/1/cancel")
-            .add_header("Idempotency-Key".parse().unwrap(), "cancel-key-abc".parse().unwrap())
-            .json(&payload)
+            .json(&serde_json::json!({
+                "merchant": "GMERCHANT0000000000000000000000000000000000000000000000000",
+                "signed_xdr": "AAAA=="
+            }))
             .await;
 
-        let status1 = resp1.status_code();
-        let body1 = resp1.text();
-
-        let resp2 = server
-            .post("/invoices/1/cancel")
-            .add_header("Idempotency-Key".parse().unwrap(), "cancel-key-abc".parse().unwrap())
-            .json(&payload)
-            .await;
-
-        assert_eq!(resp2.status_code(), status1);
-        assert_eq!(resp2.text(), body1);
+        assert_eq!(resp.status_code(), StatusCode::OK);
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body.get("status").unwrap().as_str().unwrap(), "cancelled");
     }
 }

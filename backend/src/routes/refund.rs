@@ -5,29 +5,30 @@ use axum::{
     Json,
 };
 
-use crate::idempotency::IdempotencyStore;
-use crate::AppState;
+use crate::extractors::ValidatedBody;
+use crate::soroban::SorobanClient;
 use crate::types::{ErrorResponse, RefundRequest};
 
-/// POST /invoices/:id/refund
-///
-/// Allows a payer (customer) to request a refund on a paid invoice.
-///
-/// ## Idempotency
-/// Supply an `Idempotency-Key: <uuid>` header to make this endpoint safe to retry.
-/// If the same key is received again within 24 hours, the original response is
-/// returned immediately without re-submitting the transaction to Soroban.
-/// This prevents double-refunds when a client retries after a timeout.
-///
-/// ## Error codes
-/// - 422 — invoice has not been paid (contract error 10)
-/// - 403 — caller is not the invoice payer (contract error 1)
-/// - 404 — invoice not found (contract error 4)
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/refund",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = RefundRequest,
+    responses(
+        (status = 200, description = "Refund requested", body = serde_json::Value),
+        (status = 422, description = "Invoice not paid", body = ErrorResponse),
+        (status = 403, description = "Payer not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "refund"
+)]
 pub async fn refund_invoice(
     State(state): State<AppState>,
     Path(id): Path<u64>,
-    headers: HeaderMap,
-    Json(body): Json<RefundRequest>,
+    ValidatedBody(body): ValidatedBody<RefundRequest>,
 ) -> impl IntoResponse {
     // ── Idempotency check ────────────────────────────────────────────────────
     let idem_key = headers
@@ -119,23 +120,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_refund_invoice_missing_body_returns_4xx() {
-        let server = TestServer::new(make_app()).unwrap();
-        let resp = server
-            .post("/invoices/1/refund")
-            .content_type("application/json")
-            .bytes(axum::body::Bytes::new())
-            .await;
+    async fn test_refund_invoice_missing_body_returns_422() {
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
+        // No JSON body → 415 Unsupported Media Type (no Content-Type header)
+        // or 422 Unprocessable Entity (JSON Content-Type but invalid body)
+        let resp = server.post("/invoices/1/refund").await;
         assert!(
-            resp.status_code().is_client_error(),
-            "missing body should return a 4xx, got {}",
+            resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY
+                || resp.status_code() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "expected 415 or 422, got {}",
             resp.status_code()
         );
     }
 
     #[tokio::test]
+    async fn test_refund_invoice_malformed_body_returns_422() {
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
+        // Malformed (non-JSON) body → 422 Unprocessable Entity
+        let resp = server
+            .post("/invoices/1/refund")
+            .content_type("application/json")
+            .bytes(axum::body::Bytes::from_static(b"not-valid-json{{"))
+            .await;
+        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
     async fn test_refund_invoice_unreachable_rpc_returns_error() {
-        let server = TestServer::new(make_app()).unwrap();
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
         let resp = server
             .post("/invoices/1/refund")
             .json(&serde_json::json!({
