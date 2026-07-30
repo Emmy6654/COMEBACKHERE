@@ -672,4 +672,76 @@ mod tests {
         let result = invoice_client.try_raise_dispute(&invoice_id, &1u64, &claimant, &1u32);
         assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
     }
+
+    // ── set_treasury authorization tests ────────────────────────────────────
+
+    #[test]
+    fn test_set_treasury_admin_success() {
+        let (env, cid, admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let treasury = Address::generate(&env);
+
+        // Admin should be able to set the treasury address without error.
+        client.set_treasury(&admin, &treasury);
+
+        // get_treasury must reflect the newly configured address.
+        let stored = client.get_treasury();
+        assert_eq!(stored, Some(treasury));
+    }
+
+    #[test]
+    fn test_set_treasury_non_admin_rejected() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let non_admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        let result = client.try_set_treasury(&non_admin, &treasury);
+        assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+
+        // No treasury should have been stored.
+        assert_eq!(client.get_treasury(), None);
+    }
+
+    #[test]
+    fn test_set_treasury_can_be_updated_by_admin() {
+        let (env, cid, admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let treasury_v1 = Address::generate(&env);
+        let treasury_v2 = Address::generate(&env);
+
+        // Point to first treasury.
+        client.set_treasury(&admin, &treasury_v1);
+        assert_eq!(client.get_treasury(), Some(treasury_v1));
+
+        // Re-point to a second treasury address.
+        client.set_treasury(&admin, &treasury_v2);
+        assert_eq!(client.get_treasury(), Some(treasury_v2.clone()));
+    }
+
+    #[test]
+    fn test_set_treasury_non_admin_cannot_override_existing() {
+        let (env, cid, admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        let treasury_original = Address::generate(&env);
+        let treasury_attacker = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+
+        // Admin sets the original treasury.
+        client.set_treasury(&admin, &treasury_original);
+
+        // Non-admin attempts to override it — must be rejected.
+        let result = client.try_set_treasury(&non_admin, &treasury_attacker);
+        assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+
+        // Original treasury must be unchanged.
+        assert_eq!(client.get_treasury(), Some(treasury_original));
+    }
+
+    #[test]
+    fn test_get_treasury_returns_none_before_set() {
+        let (env, cid, _admin) = setup_contract(1000);
+        let client = InvoiceContractClient::new(&env, &cid);
+        assert_eq!(client.get_treasury(), None);
+    }
 }
