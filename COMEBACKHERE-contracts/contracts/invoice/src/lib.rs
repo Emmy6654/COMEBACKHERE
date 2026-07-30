@@ -59,6 +59,7 @@ pub enum DataKey {
     GraceWindow,
     Nonce(Address, u64),
     TreasuryContract,
+    ComplianceContract,
 }
 
 fn admin(env: &Env) -> Address {
@@ -251,6 +252,14 @@ impl InvoiceContract {
     /// Emits `invoice_paid(invoice_id)` for each successfully marked invoice.
     pub fn mark_paids(env: Env, invoice_ids: Vec<u64>) -> Result<(), ContractError> {
         check_not_paused(&env)?;
+
+        // Resolve compliance contract once; if set, every invoice
+        // customer must be allowed.
+        let compliance: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ComplianceContract);
+
         for id in invoice_ids.iter() {
             let mut invoice = env
                 .storage()
@@ -263,6 +272,19 @@ impl InvoiceContract {
             if env.ledger().timestamp() >= invoice.expires_at {
                 return Err(ContractError::InvoiceExpired);
             }
+
+            // Compliance check: reject if customer is blocked
+            if let Some(ref compliance_addr) = compliance {
+                let is_allowed: bool = env.invoke_contract(
+                    compliance_addr,
+                    &Symbol::new(&env, "is_allowed"),
+                    soroban_sdk::vec![&env, invoice.customer.clone().into_val(&env)],
+                );
+                if !is_allowed {
+                    return Err(ContractError::AddressBlocked);
+                }
+            }
+
             invoice.status = InvoiceStatus::Paid;
             env.storage()
                 .persistent()

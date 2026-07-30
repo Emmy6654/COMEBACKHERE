@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, IntoVal};
 
 const MIN_AMOUNT_STROOPS: u64 = 10_000_000;
 
@@ -24,6 +24,7 @@ pub enum InvoiceError {
     AlreadyRefundRequested = 11,
     AmountPrecision = 12,
     DuplicateNonce = 13,
+    AddressBlocked = 14,
 }
 
 #[contracttype]
@@ -55,6 +56,7 @@ pub enum DataKey {
     Invoice(u64),
     NextId,
     Nonce(Address, u64),
+    ComplianceContract,
 }
 
 /// The invoice contract manages the lifecycle of on-chain invoices:
@@ -217,6 +219,23 @@ impl InvoiceContract {
         if env.ledger().timestamp() >= invoice.expires_at {
             return Err(InvoiceError::Expired);
         }
+
+        // Compliance check: reject if payer is blocked
+        let compliance: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ComplianceContract);
+        if let Some(compliance) = compliance {
+            let is_allowed: bool = env.invoke_contract(
+                &compliance,
+                &soroban_sdk::Symbol::new(&env, "is_allowed"),
+                soroban_sdk::vec![&env, payer.clone().into_val(&env)],
+            );
+            if !is_allowed {
+                return Err(InvoiceError::AddressBlocked);
+            }
+        }
+
         invoice.status = InvoiceStatus::Paid;
         env.storage()
             .instance()
@@ -323,6 +342,27 @@ impl InvoiceContract {
             return Err(InvoiceError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Configure the compliance contract address (admin only).
+    pub fn set_compliance(
+        env: Env,
+        admin: Address,
+        compliance: Address,
+    ) -> Result<(), InvoiceError> {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap();
+        if stored != admin {
+            return Err(InvoiceError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ComplianceContract, &compliance);
         Ok(())
     }
 }

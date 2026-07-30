@@ -306,6 +306,103 @@ mod tests {
         assert_eq!(r2.threshold, 3);
     }
 
+    // ── cancel authorization tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_cancel_own_settlement_succeeds() {
+        let (e, id) = setup();
+        let c = SettlementContractClient::new(&e, &id);
+        let proposer = Address::generate(&e);
+        let merchant = Address::generate(&e);
+
+        c.initialize(
+            &soroban_sdk::vec![&e, (proposer.clone(), 1u64)],
+            &1u64,
+        );
+        let sid = c.propose(&proposer, &merchant, &1000u64);
+
+        // Proposer cancels their own settlement — should succeed
+        c.cancel(&proposer, &sid);
+
+        // Verify it is now cancelled by trying to cancel again
+        let res = c.try_cancel(&proposer, &sid);
+        assert_eq!(res, Err(Ok(SettlementError::NotPending)));
+    }
+
+    #[test]
+    fn test_cancel_unauthorized_stranger() {
+        let (e, id) = setup();
+        let c = SettlementContractClient::new(&e, &id);
+        let proposer = Address::generate(&e);
+        let stranger = Address::generate(&e);
+        let merchant = Address::generate(&e);
+
+        c.initialize(
+            &soroban_sdk::vec![&e, (proposer.clone(), 1u64)],
+            &1u64,
+        );
+        let sid = c.propose(&proposer, &merchant, &1000u64);
+
+        // Stranger (not proposer, not authorized signer) attempts cancel
+        let res = c.try_cancel(&stranger, &sid);
+        assert_eq!(res, Err(Ok(SettlementError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_cancel_authorized_signer_can_cancel() {
+        let (e, id) = setup();
+        let c = SettlementContractClient::new(&e, &id);
+        let proposer = Address::generate(&e);
+        let signer = Address::generate(&e);
+        let merchant = Address::generate(&e);
+
+        c.initialize(
+            &soroban_sdk::vec![&e, (proposer.clone(), 1u64), (signer.clone(), 1u64)],
+            &2u64,
+        );
+        let sid = c.propose(&proposer, &merchant, &1000u64);
+
+        // Authorized signer (not proposer) can also cancel
+        c.cancel(&signer, &sid);
+
+        let res = c.try_cancel(&signer, &sid);
+        assert_eq!(res, Err(Ok(SettlementError::NotPending)));
+    }
+
+    #[test]
+    fn test_cancel_not_found() {
+        let (e, id) = setup();
+        let c = SettlementContractClient::new(&e, &id);
+        let signer = Address::generate(&e);
+
+        c.initialize(
+            &soroban_sdk::vec![&e, (signer.clone(), 1u64)],
+            &1u64,
+        );
+
+        let res = c.try_cancel(&signer, &99u64);
+        assert_eq!(res, Err(Ok(SettlementError::NotFound)));
+    }
+
+    #[test]
+    fn test_cancel_not_pending_fails() {
+        let (e, id) = setup();
+        let c = SettlementContractClient::new(&e, &id);
+        let proposer = Address::generate(&e);
+        let merchant = Address::generate(&e);
+
+        c.initialize(
+            &soroban_sdk::vec![&e, (proposer.clone(), 1u64)],
+            &1u64,
+        );
+        let sid = c.propose(&proposer, &merchant, &1000u64);
+
+        // Cancel succeeds
+        c.cancel(&proposer, &sid);
+
+        // Cancelling an already-cancelled (or executed) settlement fails with NotPending
+        let res = c.try_cancel(&proposer, &sid);
+        assert_eq!(res, Err(Ok(SettlementError::NotPending)));
     use proptest::prelude::*;
     extern crate std;
     use std::collections::HashSet;
