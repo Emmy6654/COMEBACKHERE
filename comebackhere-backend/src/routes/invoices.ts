@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from "express"
 import { Keypair, Networks, TransactionBuilder, BASE_FEE, Contract, nativeToScVal, SorobanRpc, xdr } from "stellar-sdk"
+import { connectMongo, getInvoicesCollection, type InvoiceRecord, type InvoiceStatus } from "../db/mongo.js"
+import { cacheGet, cacheSet } from "../lib/cache.js"
 
 const router = Router()
 
@@ -122,6 +124,107 @@ export async function createInvoice(
 
   return { invoice_id: invoiceId, status: "Pending" }
 }
+
+/**
+ * @openapi
+ * /invoices:
+ *   get:
+ *     tags: [Invoices]
+ *     summary: List invoices with pagination and filtering
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [Pending, Paid, Expired, Cancelled, RefundRequested, Released]
+ *       - in: query
+ *         name: merchant
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Paginated invoice list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Invoice'
+ *                 total:
+ *                   type: integer
+ *                 page:
+ *                   type: integer
+ *                 limit:
+ *                   type: integer
+ *                 totalPages:
+ *                   type: integer
+ */
+router.get("/", async (req: Request, res: Response) => {
+  const page = Math.max(1, parseInt(req.query.page as string, 10) || 1)
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20))
+  const statusFilter = req.query.status as string | undefined
+  const merchantFilter = req.query.merchant as string | undefined
+
+  const allowedStatuses: InvoiceStatus[] = ["Pending", "Paid", "Expired", "Cancelled", "RefundRequested", "Released"]
+  const status = statusFilter && allowedStatuses.includes(statusFilter as InvoiceStatus)
+    ? (statusFilter as InvoiceStatus)
+    : undefined
+
+  const cacheKey = `invoices:${page}:${limit}:${status ?? "all"}:${merchantFilter ?? "all"}`
+
+  const cached = await cacheGet<{ data: InvoiceRecord[]; total: number; page: number; limit: number; totalPages: number }>(cacheKey)
+  if (cached) {
+    res.json(cached)
+    return
+  }
+
+  try {
+    const db = await connectMongo()
+    const collection = getInvoicesCollection(db)
+
+    const filter: Record<string, unknown> = {}
+    if (status) filter.status = status
+    if (merchantFilter) filter.merchant_address = merchantFilter
+
+    const total = await collection.countDocuments(filter)
+    const totalPages = Math.ceil(total / limit)
+    const skip = (page - 1) * limit
+
+    const data = await collection
+      .find(filter)
+      .sort({ created_at: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray()
+
+    const result = {
+      data,
+      total,
+      page,
+      limit,
+      totalPages,
+    }
+
+    await cacheSet(cacheKey, result, 30)
+    res.json(result)
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ error: message })
+  }
+})
 
 /**
  * @openapi
@@ -310,6 +413,22 @@ router.post("/", async (req: Request, res: Response) => {
       signerSecret,
       networkPassphrase
     )
+
+    const db = await connectMongo()
+    const collection = getInvoicesCollection(db)
+    const body = req.body as CreateInvoiceBody
+    const now = new Date()
+    await collection.insertOne({
+      invoice_id: result.invoice_id,
+      merchant_address: body.merchant_address,
+      token: body.token,
+      amount: body.amount,
+      due_date: body.due_date,
+      status: "Pending",
+      created_at: now,
+      updated_at: now,
+    })
+
     res.status(201).json(result)
   } catch (err: unknown) {
     const status = (err as any)?.status ?? 500
