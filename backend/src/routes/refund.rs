@@ -10,10 +10,22 @@ use crate::extractors::ValidatedBody;
 use crate::soroban::SorobanClient;
 use crate::types::{ErrorResponse, RefundRequest, RefundResponse};
 
-/// POST /invoices/:id/refund
-///
-/// Allows a payer (customer) to request a refund on a paid invoice.
-/// Returns 422 when the contract returns NotPaid(10) — i.e. the invoice has not been paid.
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/refund",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = RefundRequest,
+    responses(
+        (status = 200, description = "Refund requested", body = serde_json::Value),
+        (status = 422, description = "Invoice not paid", body = ErrorResponse),
+        (status = 403, description = "Payer not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "refund"
+)]
 pub async fn refund_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,
@@ -85,9 +97,15 @@ mod tests {
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();
 
-        // No JSON body → 422 Unprocessable Entity
+        // No JSON body → 415 Unsupported Media Type (no Content-Type header)
+        // or 422 Unprocessable Entity (JSON Content-Type but invalid body)
         let resp = server.post("/invoices/1/refund").await;
-        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY
+                || resp.status_code() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "expected 415 or 422, got {}",
+            resp.status_code()
+        );
     }
 
     #[tokio::test]

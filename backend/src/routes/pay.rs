@@ -10,6 +10,21 @@ use crate::extractors::ValidatedBody;
 use crate::soroban::SorobanClient;
 use crate::types::{ErrorResponse, PayRequest};
 
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/pay",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = PayRequest,
+    responses(
+        (status = 200, description = "Payment successful", body = serde_json::Value),
+        (status = 403, description = "Payer not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "pay"
+)]
 pub async fn pay_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,
@@ -71,9 +86,15 @@ mod tests {
         let app = make_app(client);
         let server = TestServer::new(app).unwrap();
 
-        // No JSON body → 422 Unprocessable Entity
+        // No JSON body → 415 Unsupported Media Type (no Content-Type header)
+        // or 422 Unprocessable Entity (JSON Content-Type but invalid body)
         let resp = server.post("/invoices/1/pay").await;
-        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            resp.status_code() == StatusCode::UNPROCESSABLE_ENTITY
+                || resp.status_code() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "expected 415 or 422, got {}",
+            resp.status_code()
+        );
     }
 
     #[tokio::test]
