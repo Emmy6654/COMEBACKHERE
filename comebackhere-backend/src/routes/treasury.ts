@@ -9,6 +9,12 @@ import {
   type SorobanClient,
 } from "../lib/soroban.js"
 import { connectMongo, getSettlementsCollection } from "../db/mongo.js"
+import { validateBody } from "../middleware/validate.js"
+import {
+  settlementIdSchema,
+  executeSettlementSchema,
+  escalateHoldSchema,
+} from "../schemas/index.js"
 
 const router = Router()
 
@@ -121,15 +127,11 @@ router.get("/pending-settlements", async (_req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/approve-settlement", async (req: Request, res: Response) => {
+router.post("/approve-settlement", validateBody(settlementIdSchema), async (req: Request, res: Response) => {
   const env = requireEnv(res)
   if (!env) return
 
-  const settlementId = req.body?.settlement_id
-  if (typeof settlementId !== "number" || !Number.isInteger(settlementId) || settlementId <= 0) {
-    res.status(400).json({ error: "settlement_id must be a positive integer" })
-    return
-  }
+  const settlementId = req.body.settlement_id
 
   try {
     const client = buildSorobanClient(env.rpcUrl)
@@ -335,19 +337,15 @@ export async function executeSettlementWithBalanceCheck(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/execute-settlement", async (req: Request, res: Response) => {
+router.post("/execute-settlement", validateBody(executeSettlementSchema), async (req: Request, res: Response) => {
   const env = requireEnv(res)
   if (!env) return
 
-  const settlementId = req.body?.settlement_id
-  if (typeof settlementId !== "number" || !Number.isInteger(settlementId) || settlementId <= 0) {
-    res.status(400).json({ error: "settlement_id must be a positive integer" })
-    return
-  }
+  const { settlement_id: settlementId, token_contract } = req.body as { settlement_id: number; token_contract?: string }
 
   try {
     const result = await executeSettlementWithBalanceCheck(
-      { settlement_id: settlementId, token_contract: req.body?.token_contract },
+      { settlement_id: settlementId, token_contract },
       env,
     )
     res.json(result)
@@ -447,12 +445,8 @@ router.get("/on-hold-settlements", async (_req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/release-hold", async (req: Request, res: Response) => {
-  const settlementId = req.body?.settlement_id
-  if (typeof settlementId !== "number" || !Number.isInteger(settlementId) || settlementId <= 0) {
-    res.status(400).json({ error: "settlement_id must be a positive integer" })
-    return
-  }
+router.post("/release-hold", validateBody(settlementIdSchema), async (req: Request, res: Response) => {
+  const settlementId = req.body.settlement_id
 
   try {
     const database = await connectMongo()
@@ -546,12 +540,8 @@ router.post("/release-hold", async (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/escalate-hold", async (req: Request, res: Response) => {
-  const settlementId = req.body?.settlement_id
-  if (typeof settlementId !== "number" || !Number.isInteger(settlementId) || settlementId <= 0) {
-    res.status(400).json({ error: "settlement_id must be a positive integer" })
-    return
-  }
+router.post("/escalate-hold", validateBody(escalateHoldSchema), async (req: Request, res: Response) => {
+  const settlementId = req.body.settlement_id
 
   try {
     const database = await connectMongo()
