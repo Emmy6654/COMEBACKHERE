@@ -124,9 +124,49 @@ export async function createInvoice(
 }
 
 /**
- * GET /invoices/:id
- * Fetches the on-chain status of an existing invoice by its ID.
- * Returns: { invoice_id, status }
+ * @openapi
+ * /invoices/{id}:
+ *   get:
+ *     tags: [Invoices]
+ *     summary: Fetch invoice status by ID
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Positive integer string invoice ID
+ *     responses:
+ *       200:
+ *         description: Invoice found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 invoice_id:
+ *                   type: string
+ *                   example: "42"
+ *                 status:
+ *                   $ref: '#/components/schemas/InvoiceStatus'
+ *       400:
+ *         description: Invalid invoice ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Invoice not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       503:
+ *         description: Service misconfiguration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/:id", async (req: Request, res: Response) => {
   const { id } = req.params
@@ -178,10 +218,71 @@ router.get("/:id", async (req: Request, res: Response) => {
 })
 
 /**
- * POST /invoices
- * Creates a new invoice by submitting create_invoice to Soroban RPC.
- * Body: { merchant_address, token, amount, due_date }
- * Returns: { invoice_id, status }
+ * @openapi
+ * /invoices:
+ *   post:
+ *     tags: [Invoices]
+ *     summary: Create a new invoice
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [merchant_address, token, amount, due_date]
+ *             properties:
+ *               merchant_address:
+ *                 type: string
+ *                 description: Valid Stellar public key (G…)
+ *                 example: "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+ *               token:
+ *                 type: string
+ *                 example: "USDC"
+ *               amount:
+ *                 type: integer
+ *                 description: Positive number in stroops / smallest unit
+ *                 example: 1000000
+ *               due_date:
+ *                 type: integer
+ *                 description: Future Unix timestamp (seconds)
+ *                 example: 1720000000
+ *     responses:
+ *       201:
+ *         description: Invoice created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 invoice_id:
+ *                   type: string
+ *                   example: "1"
+ *                 status:
+ *                   $ref: '#/components/schemas/InvoiceStatus'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       422:
+ *         description: Soroban simulation or transaction failure
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       503:
+ *         description: Service misconfiguration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       504:
+ *         description: Transaction confirmation timeout
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post("/", async (req: Request, res: Response) => {
   const validationError = validateBody(req.body as Partial<CreateInvoiceBody>)
