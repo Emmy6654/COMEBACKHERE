@@ -9,6 +9,19 @@ use std::sync::Arc;
 use crate::soroban::SorobanClient;
 use crate::types::ErrorResponse;
 
+#[utoipa::path(
+    get,
+    path = "/invoices/{id}",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    responses(
+        (status = 200, description = "Invoice found", body = serde_json::Value),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "invoices"
+)]
 pub async fn get_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,

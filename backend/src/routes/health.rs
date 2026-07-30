@@ -11,6 +11,15 @@ use crate::{
     types::{DependencyHealth, HealthStatus, RpcHealthResponse},
 };
 
+#[utoipa::path(
+    get,
+    path = "/health/rpc",
+    responses(
+        (status = 200, description = "All dependencies healthy", body = inline(RpcHealthResponse)),
+        (status = 503, description = "One or more dependencies degraded", body = inline(RpcHealthResponse))
+    ),
+    tag = "health"
+)]
 pub async fn get_rpc_health(
     State(client): State<Arc<SorobanClient>>,
 ) -> impl IntoResponse {
@@ -67,8 +76,8 @@ mod tests {
     use super::*;
     use crate::soroban::SorobanClient;
     use axum::{
-        body::Body,
-        http::{Request, StatusCode},
+        http::StatusCode,
+        response::IntoResponse,
         routing::{get, post},
         Router,
     };
@@ -76,42 +85,41 @@ mod tests {
     use std::{net::SocketAddr, sync::Arc};
     use tokio::net::TcpListener;
 
-    /// Spawn a mock upstream server with independent health flags per dependency.
-    ///
-    /// - `rpc_healthy`  – controls `/soroban/rpc` (JSON-RPC POST endpoint)
-    /// - `horizon_healthy` – controls `/health` (Horizon health GET endpoint)
-    async fn spawn_test_server(rpc_healthy: bool, horizon_healthy: bool) -> SocketAddr {
+    async fn spawn_mock_dependencies(healthy: bool) -> SocketAddr {
         let app = Router::new()
             .route(
                 "/soroban/rpc",
                 post(move || async move {
-                    if rpc_healthy {
-                        axum::Json(json!({
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "result": { "sequence": 42 }
-                        }))
+                    if healthy {
+                        (
+                            StatusCode::OK,
+                            axum::Json(json!({
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "result": { "sequence": 42 }
+                            })),
+                        )
+                            .into_response()
                     } else {
-                        StatusCode::INTERNAL_SERVER_ERROR
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
                 }),
             )
             .route(
                 "/health",
                 get(move || async move {
-                    if horizon_healthy {
-                        StatusCode::OK
+                    if healthy {
+                        StatusCode::OK.into_response()
                     } else {
-                        StatusCode::SERVICE_UNAVAILABLE
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
                     }
                 }),
-            )
-            .route("/health/rpc", get(get_rpc_health));
+            );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         addr
@@ -119,11 +127,11 @@ mod tests {
 
     #[tokio::test]
     async fn returns_200_when_all_dependencies_are_healthy() {
-        let addr = spawn_test_server(true, true).await;
+        let mock_addr = spawn_mock_dependencies(true).await;
         let client = Arc::new(SorobanClient::new(
-            format!("http://{addr}/soroban/rpc"),
+            format!("http://{mock_addr}/soroban/rpc"),
             "contract".to_string(),
-            format!("http://{addr}"),
+            format!("http://{mock_addr}"),
         ));
 
         let app = Router::new()
@@ -133,7 +141,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let health_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
@@ -144,11 +152,11 @@ mod tests {
 
     #[tokio::test]
     async fn returns_503_when_any_dependency_is_degraded() {
-        let addr = spawn_test_server(false, false).await;
+        let mock_addr = spawn_mock_dependencies(false).await;
         let client = Arc::new(SorobanClient::new(
-            format!("http://{addr}/soroban/rpc"),
+            format!("http://{mock_addr}/soroban/rpc"),
             "contract".to_string(),
-            format!("http://{addr}"),
+            format!("http://{mock_addr}"),
         ));
 
         let app = Router::new()
@@ -158,7 +166,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let health_addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app.into_make_service()).await.unwrap();
         });
 
         let response = reqwest::get(format!("http://{health_addr}/health/rpc"))
