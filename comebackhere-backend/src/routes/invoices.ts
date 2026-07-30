@@ -12,31 +12,6 @@ export interface CreateInvoiceBody {
   due_date: number // Unix timestamp (seconds)
 }
 
-function isValidStellarAddress(addr: string): boolean {
-  try {
-    Keypair.fromPublicKey(addr)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function validateBody(body: Partial<CreateInvoiceBody>): string | null {
-  if (!body.merchant_address) return "merchant_address is required"
-  if (!isValidStellarAddress(body.merchant_address))
-    return "merchant_address must be a valid Stellar public key"
-  if (!body.token) return "token is required"
-  if (body.amount === undefined || body.amount === null) return "amount is required"
-  if (typeof body.amount !== "number" || body.amount <= 0)
-    return "amount must be a positive number"
-  if (body.due_date === undefined || body.due_date === null) return "due_date is required"
-  if (typeof body.due_date !== "number" || !Number.isInteger(body.due_date) || body.due_date <= 0)
-    return "due_date must be a positive Unix timestamp"
-  if (body.due_date <= Math.floor(Date.now() / 1000))
-    return "due_date must be in the future"
-  return null
-}
-
 // Soroban interaction extracted so it can be replaced in tests
 export type SorobanClient = {
   getAccount: (publicKey: string) => Promise<Parameters<TransactionBuilder["constructor"]>[0]>
@@ -271,13 +246,8 @@ router.get("/", async (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get("/:id", async (req: Request, res: Response) => {
+router.get("/:id", validateParams(invoiceIdParamSchema), async (req: Request, res: Response) => {
   const { id } = req.params
-
-  if (!id || !/^\d+$/.test(id)) {
-    res.status(400).json({ error: "id must be a positive integer" })
-    return
-  }
 
   const rpcUrl = process.env.SOROBAN_RPC_URL
   const contractId = process.env.INVOICE_CONTRACT_ID
@@ -387,13 +357,7 @@ router.get("/:id", async (req: Request, res: Response) => {
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/", async (req: Request, res: Response) => {
-  const validationError = validateBody(req.body as Partial<CreateInvoiceBody>)
-  if (validationError) {
-    res.status(400).json({ error: validationError })
-    return
-  }
-
+router.post("/", validateBody(createInvoiceSchema), async (req: Request, res: Response) => {
   const rpcUrl = process.env.SOROBAN_RPC_URL
   const contractId = process.env.INVOICE_CONTRACT_ID
   const signerSecret = process.env.SIGNER_SECRET_KEY
