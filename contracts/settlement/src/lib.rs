@@ -18,6 +18,7 @@ pub struct Settlement {
     pub status: SettlementStatus,
     pub approval_weight: u64,
     pub approvals: Vec<Address>,
+    pub proposer: Address,
 }
 
 #[contracttype]
@@ -94,6 +95,7 @@ impl SettlementContract {
             status: SettlementStatus::Pending,
             approval_weight: 0,
             approvals: Vec::new(&e),
+            proposer: proposer.clone(),
         };
         e.storage().instance().set(&DataKey::Settlement(id), &s);
         e.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -158,17 +160,38 @@ impl SettlementContract {
         })
     }
 
-    /// Cancel a pending settlement (admin/proposer action).
+    /// Cancel a pending settlement.
+    ///
+    /// Only the original proposer or an authorized signer may cancel.
+    ///
+    /// Errors:
+    /// - `NotFound`      – settlement ID does not exist
+    /// - `Unauthorized`  – caller is neither proposer nor authorized signer
+    /// - `NotPending`    – settlement is not in Pending status
     pub fn cancel(e: Env, caller: Address, settlement_id: u64) -> Result<(), SettlementError> {
         caller.require_auth();
+
         let mut settlement: Settlement = e
             .storage()
             .instance()
             .get(&DataKey::Settlement(settlement_id))
             .ok_or(SettlementError::NotFound)?;
+
         if settlement.status != SettlementStatus::Pending {
             return Err(SettlementError::NotPending);
         }
+
+        // Allow original proposer or an authorized signer to cancel
+        let is_proposer = settlement.proposer == caller;
+        let weight: u64 = e
+            .storage()
+            .instance()
+            .get(&DataKey::Signer(caller.clone()))
+            .unwrap_or(0);
+        if !is_proposer && weight == 0 {
+            return Err(SettlementError::Unauthorized);
+        }
+
         settlement.status = SettlementStatus::Cancelled;
         e.storage()
             .instance()
