@@ -11,6 +11,15 @@ use crate::{
     types::{DependencyHealth, HealthStatus, RpcHealthResponse},
 };
 
+#[utoipa::path(
+    get,
+    path = "/health/rpc",
+    responses(
+        (status = 200, description = "All dependencies healthy", body = inline(RpcHealthResponse)),
+        (status = 503, description = "One or more dependencies degraded", body = inline(RpcHealthResponse))
+    ),
+    tag = "health"
+)]
 pub async fn get_rpc_health(
     State(client): State<Arc<SorobanClient>>,
 ) -> impl IntoResponse {

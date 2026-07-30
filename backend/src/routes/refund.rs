@@ -9,10 +9,22 @@ use std::sync::Arc;
 use crate::soroban::SorobanClient;
 use crate::types::{ErrorResponse, RefundRequest, RefundResponse};
 
-/// POST /invoices/:id/refund
-///
-/// Allows a payer (customer) to request a refund on a paid invoice.
-/// Returns 422 when the contract returns NotPaid(10) — i.e. the invoice has not been paid.
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/refund",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = RefundRequest,
+    responses(
+        (status = 200, description = "Refund requested", body = serde_json::Value),
+        (status = 422, description = "Invoice not paid", body = ErrorResponse),
+        (status = 403, description = "Payer not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "refund"
+)]
 pub async fn refund_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,

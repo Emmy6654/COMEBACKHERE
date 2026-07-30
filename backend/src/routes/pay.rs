@@ -9,6 +9,21 @@ use std::sync::Arc;
 use crate::soroban::SorobanClient;
 use crate::types::{ErrorResponse, PayRequest};
 
+#[utoipa::path(
+    post,
+    path = "/invoices/{id}/pay",
+    params(
+        ("id" = u64, Path, description = "Invoice ID")
+    ),
+    request_body = PayRequest,
+    responses(
+        (status = 200, description = "Payment successful", body = serde_json::Value),
+        (status = 403, description = "Payer not authorized", body = ErrorResponse),
+        (status = 404, description = "Invoice not found", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse)
+    ),
+    tag = "pay"
+)]
 pub async fn pay_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,
