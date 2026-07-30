@@ -6,7 +6,7 @@ use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 fn setup_env() -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(TreasuryContract, ());
+    let contract_id = env.register_contract(None, TreasuryContract);
     (env, contract_id)
 }
 
@@ -16,7 +16,7 @@ fn make_client<'a>(env: &'a Env, id: &Address) -> TreasuryContractClient<'a> {
 
 fn create_approved_settlement(
     client: &TreasuryContractClient,
-    env: &Env,
+    _env: &Env,
     signer_a: &Address,
     signer_b: &Address,
     token: &Address,
