@@ -6,6 +6,7 @@ use axum::{
 };
 use std::sync::Arc;
 
+use crate::extractors::ValidatedBody;
 use crate::soroban::SorobanClient;
 use crate::types::{CancelRequest, CancelResponse, ErrorResponse};
 
@@ -27,7 +28,7 @@ use crate::types::{CancelRequest, CancelResponse, ErrorResponse};
 pub async fn cancel_invoice(
     State(client): State<Arc<SorobanClient>>,
     Path(id): Path<u64>,
-    Json(body): Json<CancelRequest>,
+    ValidatedBody(body): ValidatedBody<CancelRequest>,
 ) -> impl IntoResponse {
     match client.cancel_invoice(id, &body.merchant, &body.signed_xdr).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
@@ -97,6 +98,25 @@ mod tests {
             "expected 415 or 422, got {}",
             resp.status_code()
         );
+    }
+
+    #[tokio::test]
+    async fn test_cancel_invoice_malformed_body_returns_422() {
+        let client = SorobanClient::new(
+            "http://127.0.0.1:19999/soroban/rpc".to_string(),
+            "CONTRACT_ID".to_string(),
+            "https://horizon.stellar.org".to_string(),
+        );
+        let app = make_app(client);
+        let server = TestServer::new(app).unwrap();
+
+        // Malformed (non-JSON) body → 422 Unprocessable Entity
+        let resp = server
+            .post("/invoices/1/cancel")
+            .content_type("application/json")
+            .bytes(axum::body::Bytes::from_static(b"not-valid-json{{"))
+            .await;
+        assert_eq!(resp.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
