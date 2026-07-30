@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::extractors::ValidatedBody;
 use crate::soroban::SorobanClient;
-use crate::types::{ErrorResponse, RefundRequest, RefundResponse};
+use crate::types::{ErrorResponse, RefundRequest};
 
 #[utoipa::path(
     post,

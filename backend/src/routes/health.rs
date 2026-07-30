@@ -76,8 +76,8 @@ mod tests {
     use super::*;
     use crate::soroban::SorobanClient;
     use axum::{
-        body::Body,
-        http::{Request, StatusCode},
+        http::StatusCode,
+        response::IntoResponse,
         routing::{get, post},
         Router,
     };
@@ -85,7 +85,7 @@ mod tests {
     use std::{net::SocketAddr, sync::Arc};
     use tokio::net::TcpListener;
 
-    async fn spawn_test_server(healthy: bool) -> SocketAddr {
+    async fn spawn_mock_dependencies(healthy: bool) -> SocketAddr {
         let app = Router::new()
             .route(
                 "/soroban/rpc",
@@ -127,11 +127,11 @@ mod tests {
 
     #[tokio::test]
     async fn returns_200_when_all_dependencies_are_healthy() {
-        let addr = spawn_test_server(true).await;
+        let mock_addr = spawn_mock_dependencies(true).await;
         let client = Arc::new(SorobanClient::new(
-            format!("http://{addr}/soroban/rpc"),
+            format!("http://{mock_addr}/soroban/rpc"),
             "contract".to_string(),
-            format!("http://{addr}"),
+            format!("http://{mock_addr}"),
         ));
 
         let app = Router::new()
@@ -152,11 +152,11 @@ mod tests {
 
     #[tokio::test]
     async fn returns_503_when_any_dependency_is_degraded() {
-        let addr = spawn_test_server(false).await;
+        let mock_addr = spawn_mock_dependencies(false).await;
         let client = Arc::new(SorobanClient::new(
-            format!("http://{addr}/soroban/rpc"),
+            format!("http://{mock_addr}/soroban/rpc"),
             "contract".to_string(),
-            format!("http://{addr}"),
+            format!("http://{mock_addr}"),
         ));
 
         let app = Router::new()
