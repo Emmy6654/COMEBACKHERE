@@ -23,6 +23,7 @@ pub enum ContractError {
     GraceWindowNotExpired = 12,
     DuplicateNonce = 13,
     TreasuryNotConfigured = 14,
+    Overflow = 15,
 }
 
 #[contracttype]
@@ -96,18 +97,14 @@ impl InvoiceContract {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(ContractError::AlreadyInitialized);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::Admin, &admin);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage()
             .persistent()
             .set(&DataKey::GraceWindow, &86400u64);
         env.storage()
             .persistent()
             .set(&DataKey::InvoiceCount, &0u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Paused, &false);
+        env.storage().persistent().set(&DataKey::Paused, &false);
         Ok(())
     }
 
@@ -127,16 +124,14 @@ impl InvoiceContract {
         if env.storage().persistent().has(&nonce_key) {
             return Err(ContractError::DuplicateNonce);
         }
-        env.storage()
-            .persistent()
-            .set(&nonce_key, &true);
+        env.storage().persistent().set(&nonce_key, &true);
 
         let mut count: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::InvoiceCount)
             .unwrap_or(0);
-        count += 1;
+        count = count.checked_add(1).ok_or(ContractError::Overflow)?;
         env.storage()
             .persistent()
             .set(&DataKey::InvoiceCount, &count);
@@ -199,7 +194,11 @@ impl InvoiceContract {
         Ok(())
     }
 
-    pub fn cancel_invoiced(env: Env, invoice_id: u64, caller: Address) -> Result<(), ContractError> {
+    pub fn cancel_invoiced(
+        env: Env,
+        invoice_id: u64,
+        caller: Address,
+    ) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         let mut invoice = env
             .storage()
@@ -220,11 +219,7 @@ impl InvoiceContract {
         Ok(())
     }
 
-    pub fn request_refund(
-        env: Env,
-        invoice_id: u64,
-        caller: Address,
-    ) -> Result<(), ContractError> {
+    pub fn request_refund(env: Env, invoice_id: u64, caller: Address) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         let mut invoice = env
             .storage()
@@ -248,11 +243,7 @@ impl InvoiceContract {
         Ok(())
     }
 
-    pub fn release_escrow(
-        env: Env,
-        invoice_id: u64,
-        caller: Address,
-    ) -> Result<(), ContractError> {
+    pub fn release_escrow(env: Env, invoice_id: u64, caller: Address) -> Result<(), ContractError> {
         check_not_paused(&env)?;
         let mut invoice = env
             .storage()
@@ -270,7 +261,11 @@ impl InvoiceContract {
             .persistent()
             .get(&DataKey::GraceWindow)
             .unwrap();
-        if env.ledger().timestamp() < invoice.created_at + grace_window {
+        let release_at = invoice
+            .created_at
+            .checked_add(grace_window)
+            .ok_or(ContractError::Overflow)?;
+        if env.ledger().timestamp() < release_at {
             return Err(ContractError::GraceWindowNotExpired);
         }
         invoice.status = InvoiceStatus::Released;
@@ -311,9 +306,7 @@ impl InvoiceContract {
     }
 
     pub fn get_treasury(env: Env) -> Option<Address> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::TreasuryContract)
+        env.storage().persistent().get(&DataKey::TreasuryContract)
     }
 
     /// Raise a dispute on an invoice, cross-contract calling treasury place_on_hold.
@@ -358,18 +351,14 @@ impl InvoiceContract {
 
     pub fn pause(env: Env, caller: Address) -> Result<(), ContractError> {
         check_admin(&env, &caller)?;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Paused, &true);
+        env.storage().persistent().set(&DataKey::Paused, &true);
         events::contract_paused(&env);
         Ok(())
     }
 
     pub fn unpause(env: Env, caller: Address) -> Result<(), ContractError> {
         check_admin(&env, &caller)?;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Paused, &false);
+        env.storage().persistent().set(&DataKey::Paused, &false);
         events::contract_unpaused(&env);
         Ok(())
     }
@@ -477,6 +466,45 @@ mod tests {
 
         let result = client.try_create_invoice(&merchant, &customer, &1000i128, &token, &5000, &1);
         assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_create_invoice_near_u64_max_count_returns_overflow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(InvoiceContract, ());
+        let client = InvoiceContractClient::new(&env, &contract_id);
+        client.initialize(&admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::InvoiceCount, &u64::MAX);
+
+        let merchant = Address::generate(&env);
+        let customer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let result = client.try_create_invoice(&merchant, &customer, &1000i128, &token, &5000, &1);
+        assert_eq!(result, Err(Ok(ContractError::Overflow)));
+    }
+
+    #[test]
+    fn test_release_escrow_overflow_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(InvoiceContract, ());
+        let client = InvoiceContractClient::new(&env, &contract_id);
+        client.initialize(&admin);
+        env.ledger().with_mut(|li| li.timestamp = u64::MAX - 1);
+
+        let merchant = Address::generate(&env);
+        let customer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let invoice_id = client.create_invoice(&merchant, &customer, &1000i128, &token, &5000, &1);
+        client.mark_paids(&soroban_sdk::vec![&env, invoice_id]);
+        client.request_refund(&invoice_id, &customer);
+        let result = client.try_release_escrow(&invoice_id, &merchant);
+        assert_eq!(result, Err(Ok(ContractError::Overflow)));
     }
 
     #[test]
@@ -588,7 +616,13 @@ mod tests {
         invoice_client.initialize(&admin);
         invoice_client.set_treasury(&admin, &treasury_cid);
         env.ledger().with_mut(|li| li.timestamp = ts);
-        (env, invoice_cid, treasury_cid, admin, Address::generate(&env))
+        (
+            env,
+            invoice_cid,
+            treasury_cid,
+            admin,
+            Address::generate(&env),
+        )
     }
 
     #[test]
@@ -605,7 +639,10 @@ mod tests {
 
         invoice_client.raise_dispute(&invoice_id, &1u64, &claimant, &1u32);
 
-        assert!(treasury_client.was_held(&1u64), "settlement should be on hold");
+        assert!(
+            treasury_client.was_held(&1u64),
+            "settlement should be on hold"
+        );
     }
 
     #[test]
@@ -623,7 +660,10 @@ mod tests {
 
         // invoice_created + dispute_raised = at least 2 events
         let all_events = env.events().all();
-        assert!(all_events.len() >= 2, "dispute_raised event should be emitted");
+        assert!(
+            all_events.len() >= 2,
+            "dispute_raised event should be emitted"
+        );
     }
 
     #[test]

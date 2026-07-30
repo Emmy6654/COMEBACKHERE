@@ -20,6 +20,7 @@ pub enum InvoiceError {
     NotPaid = 10,
     AmountPrecision = 12,
     DuplicateNonce = 13,
+    Overflow = 14,
 }
 
 #[contracttype]
@@ -126,7 +127,8 @@ impl InvoiceContract {
             status: InvoiceStatus::Pending,
         };
         env.storage().instance().set(&DataKey::Invoice(id), &invoice);
-        env.storage().instance().set(&DataKey::NextId, &(id + 1));
+        let next_id = id.checked_add(1).ok_or(InvoiceError::Overflow)?;
+        env.storage().instance().set(&DataKey::NextId, &next_id);
 
         Ok(id)
     }
@@ -386,5 +388,16 @@ mod tests {
         c.pause(&admin);
         let res = c.try_create_invoice(&merchant, &10_000_000u64, &10_000_000u64, &3600u64, &1u64);
         assert_eq!(res, Err(Ok(InvoiceError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_next_id_overflow_returns_error() {
+        let (env, cid, _admin) = setup();
+        let c = InvoiceContractClient::new(&env, &cid);
+        let merchant = Address::generate(&env);
+        env.storage().instance().set(&DataKey::NextId, &u64::MAX);
+
+        let res = c.try_create_invoice(&merchant, &10_000_000u64, &10_000_000u64, &3600u64, &1u64);
+        assert_eq!(res, Err(Ok(InvoiceError::Overflow)));
     }
 }

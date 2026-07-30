@@ -32,7 +32,10 @@ pub enum DataKey {
 pub struct ComplianceContract;
 
 fn is_paused(e: &Env) -> bool {
-    e.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    e.storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false)
 }
 
 fn check_not_paused(e: &Env) -> Result<(), ContractError> {
@@ -100,21 +103,16 @@ impl ComplianceContract {
     ) -> Result<(), ContractError> {
         check_not_paused(&e)?;
         admin.require_auth();
-        e.storage()
-            .instance()
-            .set(&DataKey::Status(addr.clone()), &AddressStatus::AllowedUntil(until));
-        e.events().publish(
-            (Symbol::new(&e, "address_allowed_until"),),
-            (addr, until),
+        e.storage().instance().set(
+            &DataKey::Status(addr.clone()),
+            &AddressStatus::AllowedUntil(until),
         );
+        e.events()
+            .publish((Symbol::new(&e, "address_allowed_until"),), (addr, until));
         Ok(())
     }
 
-    pub fn transfer_admin(
-        e: Env,
-        admin: Address,
-        new_admin: Address,
-    ) -> Result<(), ContractError> {
+    pub fn transfer_admin(e: Env, admin: Address, new_admin: Address) -> Result<(), ContractError> {
         check_not_paused(&e)?;
         admin.require_auth();
         e.storage().instance().set(&DataKey::Admin, &new_admin);
@@ -132,13 +130,9 @@ impl ComplianceContract {
             return Err(ContractError::Unauthorized);
         }
         e.storage().instance().set(&DataKey::Admin, &new_admin);
-        e.storage()
-            .instance()
-            .remove(&DataKey::PendingAdmin);
-        e.events().publish(
-            (Symbol::new(&e, "accept_admin"),),
-            &new_admin,
-        );
+        e.storage().instance().remove(&DataKey::PendingAdmin);
+        e.events()
+            .publish((Symbol::new(&e, "accept_admin"),), &new_admin);
         Ok(())
     }
 
@@ -159,7 +153,7 @@ impl ComplianceContract {
             .instance()
             .remove(&DataKey::Status(addr.clone()));
         e.events()
-            .publish((Symbol::new(&e, "address_cleared"),), addr);
+            .publish((Symbol::new(&e, "address_cleared"),), (addr, status));
         Ok(())
     }
 
@@ -222,5 +216,19 @@ mod tests {
         let (_e, c, admin, addr) = setup(9999);
         c.allow_address(&admin, &addr);
         assert!(c.is_allowed(&addr));
+    }
+
+    #[test]
+    fn test_clear_address_emits_event_with_previous_status() {
+        let (e, cid, admin, addr) = setup(1000);
+        let c = ComplianceContractClient::new(&e, &cid);
+        c.allow_address(&admin, &addr);
+
+        c.clear_address(&admin, &addr);
+
+        let events = e.events().all();
+        assert_eq!(events.len(), 2);
+        let payload = &events[1].data;
+        assert!(payload.len() >= 2);
     }
 }
