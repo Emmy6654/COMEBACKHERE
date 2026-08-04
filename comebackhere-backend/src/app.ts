@@ -9,6 +9,7 @@ import thresholdRouter from "./routes/threshold.js"
 import disputesRouter from "./routes/disputes.js"
 import analyticsRouter from "./routes/analytics.js"
 import { rateLimitMiddleware } from "./middleware/rateLimiter.js"
+import { correlationIdMiddleware } from "./middleware/correlationId.js"
 import { openapiSpec } from "./openapi.js"
 
 export function createApp() {
