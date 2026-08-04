@@ -7,6 +7,8 @@ import {
   submitContractCall,
   type SorobanClient,
 } from "../lib/soroban.js"
+import { validateBody } from "../middleware/validate.js"
+import { graceWindowSchema } from "../schemas/index.js"
 
 const router = Router()
 
@@ -158,30 +160,11 @@ export async function setGraceWindow(
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/grace-window", async (req: Request, res: Response) => {
+router.post("/grace-window", validateBody(graceWindowSchema), async (req: Request, res: Response) => {
   const env = requireEnv(res)
   if (!env) return
 
-  const graceWindowSeconds = req.body?.grace_window_seconds
-  if (
-    typeof graceWindowSeconds !== "number" ||
-    !Number.isInteger(graceWindowSeconds) ||
-    graceWindowSeconds <= 0
-  ) {
-    res.status(400).json({ error: "grace_window_seconds must be a positive integer" })
-    return
-  }
-
-  // Maximum grace window: 30 days (2_592_000 seconds).
-  // Larger values are rejected to prevent misconfiguration from effectively
-  // disabling invoice expiry. GraceWindowSettings can display this constraint inline.
-  const MAX_GRACE_WINDOW_SECONDS = 2_592_000
-  if (graceWindowSeconds > MAX_GRACE_WINDOW_SECONDS) {
-    res.status(400).json({
-      error: `grace_window_seconds must not exceed ${MAX_GRACE_WINDOW_SECONDS} (30 days)`,
-    })
-    return
-  }
+  const graceWindowSeconds = req.body.grace_window_seconds
 
   try {
     const result = await setGraceWindow(graceWindowSeconds, env)

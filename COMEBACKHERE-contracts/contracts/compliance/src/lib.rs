@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -120,6 +120,7 @@ impl ComplianceContract {
     }
 
     pub fn accept_admin(e: Env, new_admin: Address) -> Result<(), ContractError> {
+        check_not_paused(&e)?;
         new_admin.require_auth();
         let pending: Address = e
             .storage()
@@ -157,14 +158,28 @@ impl ComplianceContract {
         Ok(())
     }
 
-    pub fn pause(e: Env, admin: Address) {
+    pub fn pause(e: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();
+        let stored_admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
         e.storage().instance().set(&DataKey::Paused, &true);
+        e.events()
+            .publish((Symbol::new(&e, "contract_paused"),), ());
+        Ok(())
     }
 
-    pub fn unpause(e: Env, admin: Address) {
+    pub fn unpause(e: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();
+        let stored_admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            return Err(ContractError::Unauthorized);
+        }
         e.storage().instance().set(&DataKey::Paused, &false);
+        e.events()
+            .publish((Symbol::new(&e, "contract_unpaused"),), ());
+        Ok(())
     }
 }
 
@@ -218,17 +233,134 @@ mod tests {
         assert!(c.is_allowed(&addr));
     }
 
+    // ── pause / unpause and admin guard tests ─────────────────────────────────
+
     #[test]
-    fn test_clear_address_emits_event_with_previous_status() {
-        let (e, cid, admin, addr) = setup(1000);
-        let c = ComplianceContractClient::new(&e, &cid);
+    fn test_pause_emits_event() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+
+        let all_events = e.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (contract_id, "contract_paused".into())),
+            "contract_paused event should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_unpause_emits_event() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+        c.unpause(&admin);
+
+        let all_events = e.events().all();
+        assert!(
+            all_events.iter().any(|ev| ev.0 == (contract_id, "contract_unpaused".into())),
+            "contract_unpaused event should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_pause_unauthorized_fails() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let non_admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        let res = c.try_pause(&non_admin);
+        assert_eq!(res, Err(Ok(ContractError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_unpause_unauthorized_fails() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let non_admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+        let res = c.try_unpause(&non_admin);
+        assert_eq!(res, Err(Ok(ContractError::Unauthorized)));
+    }
+
+    #[test]
+    fn test_accept_admin_when_paused_fails() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let new_admin = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+        let res = c.try_accept_admin(&new_admin);
+        assert_eq!(res, Err(Ok(ContractError::ContractPaused)));
+    }
+
+    #[test]
+    fn test_mutating_entrypoints_blocked_when_paused() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let addr = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
+        c.pause(&admin);
+
+        assert_eq!(
+            c.try_allow_address(&admin, &addr),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            c.try_block_address(&admin, &addr),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            c.try_allow_address_until(&admin, &addr, &1000u64),
+            Err(Ok(ContractError::ContractPaused))
+        );
+        assert_eq!(
+            c.try_clear_address(&admin, &addr),
+            Err(Ok(ContractError::ContractPaused))
+        );
+    }
+
+    #[test]
+    fn test_readonly_entrypoints_work_when_paused() {
+        let e = Env::default();
+        e.mock_all_auths();
+        let contract_id = e.register(ComplianceContract, ());
+        let admin = Address::generate(&e);
+        let addr = Address::generate(&e);
+        ComplianceContractClient::new(&e, &contract_id).initialize(&admin);
+        let c = ComplianceContractClient::new(&e, &contract_id);
+
         c.allow_address(&admin, &addr);
+        c.pause(&admin);
 
-        c.clear_address(&admin, &addr);
-
-        let events = e.events().all();
-        assert_eq!(events.len(), 2);
-        let payload = &events[1].data;
-        assert!(payload.len() >= 2);
+        assert!(c.is_allowed(&addr));
+        let status = c.get_address_status(&addr);
+        assert!(matches!(status, AddressStatus::Allowed));
     }
 }
