@@ -80,7 +80,10 @@ pub enum DataKey {
 }
 
 fn is_paused(e: &Env) -> bool {
-    e.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    e.storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false)
 }
 
 fn check_not_paused(e: &Env) -> Result<(), TreasuryError> {
@@ -310,13 +313,21 @@ impl TreasuryContract {
         e: Env,
         offset: Option<u32>,
         limit: Option<u32>,
-    ) -> Vec<u64> {
+    ) -> Result<Vec<u64>, TreasuryError> {
+        const MAX_PAGE_SIZE: u32 = 100;
         let next_id: u64 = e
             .storage()
             .instance()
             .get(&DataKey::NextSettlementId)
             .unwrap_or(1u64);
-        let cap: u32 = limit.unwrap_or(100).min(100);
+        let cap: u32 = if let Some(limit) = limit {
+            if limit > MAX_PAGE_SIZE {
+                return Err(TreasuryError::InvalidPagination);
+            }
+            limit
+        } else {
+            MAX_PAGE_SIZE
+        };
         let skip: u32 = offset.unwrap_or(0);
 
         let mut result: Vec<u64> = Vec::new(&e);
@@ -341,7 +352,7 @@ impl TreasuryContract {
                 }
             }
         }
-        result
+        Ok(result)
     }
 
     fn check_admin(e: &Env, admin: &Address) -> Result<(), TreasuryError> {
@@ -684,7 +695,7 @@ mod tests {
         let signer = soroban_sdk::Address::generate(&e);
         c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         let result = c.get_pending_settlements(&None, &None);
-        assert_eq!(result.len(), 0);
+        assert_eq!(result, Ok(Vec::new(&e)));
     }
 
     #[test]
@@ -695,13 +706,9 @@ mod tests {
         let token = soroban_sdk::Address::generate(&e);
         let merchant = soroban_sdk::Address::generate(&e);
         let signer = soroban_sdk::Address::generate(&e);
-        c.initialize(
-            &soroban_sdk::vec![&e, (signer.clone(), 1u64)],
-            &1,
-            &admin,
-        );
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         let sid = c.propose_settlement(&signer, &token, &1000u64, &merchant);
-        let result = c.get_pending_settlements(&None, &None);
+        let result = c.get_pending_settlements(&None, &None).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result.get(0).unwrap(), sid);
     }
@@ -714,16 +721,12 @@ mod tests {
         let token = soroban_sdk::Address::generate(&e);
         let merchant = soroban_sdk::Address::generate(&e);
         let signer = soroban_sdk::Address::generate(&e);
-        c.initialize(
-            &soroban_sdk::vec![&e, (signer.clone(), 2u64)],
-            &1,
-            &admin,
-        );
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 2u64)], &1, &admin);
         let s1 = c.propose_settlement(&signer, &token, &1000u64, &merchant);
         let s2 = c.propose_settlement(&signer, &token, &2000u64, &merchant);
         c.approve_settlement(&signer, &s1);
         c.execute_settlement(&signer, &s1, &token);
-        let result = c.get_pending_settlements(&None, &None);
+        let result = c.get_pending_settlements(&None, &None).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result.get(0).unwrap(), s2);
     }
@@ -736,15 +739,11 @@ mod tests {
         let token = soroban_sdk::Address::generate(&e);
         let merchant = soroban_sdk::Address::generate(&e);
         let signer = soroban_sdk::Address::generate(&e);
-        c.initialize(
-            &soroban_sdk::vec![&e, (signer.clone(), 1u64)],
-            &1,
-            &admin,
-        );
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         for _ in 0..5 {
             c.propose_settlement(&signer, &token, &100u64, &merchant);
         }
-        let page = c.get_pending_settlements(&Some(2u32), &Some(2u32));
+        let page = c.get_pending_settlements(&Some(2u32), &Some(2u32)).unwrap();
         assert_eq!(page.len(), 2);
         assert_eq!(page.get(0).unwrap(), 3u64);
         assert_eq!(page.get(1).unwrap(), 4u64);
@@ -758,16 +757,28 @@ mod tests {
         let token = soroban_sdk::Address::generate(&e);
         let merchant = soroban_sdk::Address::generate(&e);
         let signer = soroban_sdk::Address::generate(&e);
-        c.initialize(
-            &soroban_sdk::vec![&e, (signer.clone(), 1u64)],
-            &1,
-            &admin,
-        );
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
         for _ in 0..5 {
             c.propose_settlement(&signer, &token, &100u64, &merchant);
         }
         let result = c.get_pending_settlements(&None, &Some(200u32));
-        assert_eq!(result.len(), 5);
+        assert_eq!(result, Err(TreasuryError::InvalidPagination));
+    }
+
+    #[test]
+    fn test_offset_beyond_pending_count_returns_empty_page() {
+        let (e, id) = setup();
+        let c = client(&e, &id);
+        let admin = soroban_sdk::Address::generate(&e);
+        let token = soroban_sdk::Address::generate(&e);
+        let merchant = soroban_sdk::Address::generate(&e);
+        let signer = soroban_sdk::Address::generate(&e);
+        c.initialize(&soroban_sdk::vec![&e, (signer.clone(), 1u64)], &1, &admin);
+        c.propose_settlement(&signer, &token, &100u64, &merchant);
+        let page = c
+            .get_pending_settlements(&Some(10u32), &Some(5u32))
+            .unwrap();
+        assert!(page.is_empty());
     }
 
     // ── paused guard tests ───────────────────────────────────────────────────
@@ -857,7 +868,12 @@ mod tests {
         // threshold=3, each signer weight=1 → total weight=3 >= 3 (valid init)
         // After s1 approves: approval_weight=1 < 3
         c.initialize(
-            &soroban_sdk::vec![&e, (s1.clone(), 1u64), (s2.clone(), 1u64), (s3.clone(), 1u64)],
+            &soroban_sdk::vec![
+                &e,
+                (s1.clone(), 1u64),
+                (s2.clone(), 1u64),
+                (s3.clone(), 1u64)
+            ],
             &3,
             &admin,
         );
@@ -867,7 +883,7 @@ mod tests {
         let res = c.try_execute_settlement(&s1, &sid, &token);
         assert_eq!(res, Err(Ok(TreasuryError::InsufficientApprovals)));
         // settlement must still be Pending
-        let pending = c.get_pending_settlements(&None, &None);
+        let pending = c.get_pending_settlements(&None, &None).unwrap();
         assert!(pending.contains(&sid));
     }
 
@@ -885,7 +901,7 @@ mod tests {
         c.approve_settlement(&signer, &sid);
         c.execute_settlement(&signer, &sid, &token);
         // settlement no longer pending
-        let pending = c.get_pending_settlements(&None, &None);
+        let pending = c.get_pending_settlements(&None, &None).unwrap();
         assert!(!pending.contains(&sid));
     }
 
@@ -902,7 +918,7 @@ mod tests {
         let sid = c.propose_settlement(&signer, &token, &500u64, &merchant);
         c.approve_settlement(&signer, &sid);
         c.execute_settlement(&signer, &sid, &token);
-        let pending = c.get_pending_settlements(&None, &None);
+        let pending = c.get_pending_settlements(&None, &None).unwrap();
         assert!(!pending.contains(&sid));
     }
 
@@ -1010,7 +1026,7 @@ mod tests {
         // s2 approves: weight=3 == 3, can execute
         c.approve_settlement(&s2, &sid);
         c.execute_settlement(&s1, &sid, &token);
-        let pending = c.get_pending_settlements(&None, &None);
+        let pending = c.get_pending_settlements(&None, &None).unwrap();
         assert!(!pending.contains(&sid));
     }
 

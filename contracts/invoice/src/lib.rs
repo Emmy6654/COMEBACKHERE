@@ -174,7 +174,8 @@ impl InvoiceContract {
             status: InvoiceStatus::Pending,
         };
         env.storage().instance().set(&DataKey::Invoice(id), &invoice);
-        env.storage().instance().set(&DataKey::NextId, &(id + 1));
+        let next_id = id.checked_add(1).ok_or(InvoiceError::Overflow)?;
+        env.storage().instance().set(&DataKey::NextId, &next_id);
 
         Ok(id)
     }

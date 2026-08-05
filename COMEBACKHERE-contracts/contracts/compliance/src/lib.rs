@@ -32,7 +32,10 @@ pub enum DataKey {
 pub struct ComplianceContract;
 
 fn is_paused(e: &Env) -> bool {
-    e.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    e.storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false)
 }
 
 fn check_not_paused(e: &Env) -> Result<(), ContractError> {
@@ -100,21 +103,16 @@ impl ComplianceContract {
     ) -> Result<(), ContractError> {
         check_not_paused(&e)?;
         admin.require_auth();
-        e.storage()
-            .instance()
-            .set(&DataKey::Status(addr.clone()), &AddressStatus::AllowedUntil(until));
-        e.events().publish(
-            (Symbol::new(&e, "address_allowed_until"),),
-            (addr, until),
+        e.storage().instance().set(
+            &DataKey::Status(addr.clone()),
+            &AddressStatus::AllowedUntil(until),
         );
+        e.events()
+            .publish((Symbol::new(&e, "address_allowed_until"),), (addr, until));
         Ok(())
     }
 
-    pub fn transfer_admin(
-        e: Env,
-        admin: Address,
-        new_admin: Address,
-    ) -> Result<(), ContractError> {
+    pub fn transfer_admin(e: Env, admin: Address, new_admin: Address) -> Result<(), ContractError> {
         check_not_paused(&e)?;
         admin.require_auth();
         e.storage().instance().set(&DataKey::Admin, &new_admin);
@@ -133,13 +131,9 @@ impl ComplianceContract {
             return Err(ContractError::Unauthorized);
         }
         e.storage().instance().set(&DataKey::Admin, &new_admin);
-        e.storage()
-            .instance()
-            .remove(&DataKey::PendingAdmin);
-        e.events().publish(
-            (Symbol::new(&e, "accept_admin"),),
-            &new_admin,
-        );
+        e.storage().instance().remove(&DataKey::PendingAdmin);
+        e.events()
+            .publish((Symbol::new(&e, "accept_admin"),), &new_admin);
         Ok(())
     }
 
@@ -160,7 +154,7 @@ impl ComplianceContract {
             .instance()
             .remove(&DataKey::Status(addr.clone()));
         e.events()
-            .publish((Symbol::new(&e, "address_cleared"),), addr);
+            .publish((Symbol::new(&e, "address_cleared"),), (addr, status));
         Ok(())
     }
 
