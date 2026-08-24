@@ -58,3 +58,12 @@ lcov.info
 *.local
 .turbo/
 .parcel-cache/
+
+# Vitest extended outputs
+vitest.config.ts.timestamp-*
+**/*.test-d.ts
+
+# Editor session files
+*.swp
+*.swo
+*~

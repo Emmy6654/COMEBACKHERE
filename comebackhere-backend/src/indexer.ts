@@ -1,9 +1,20 @@
 /**
- * Invoice event indexer — #69
+ * Invoice event indexer — #69 / #209
  *
  * Polls Soroban for invoice contract events (invoice_created, invoice_paid,
  * invoice_expired, invoice_cancelled, escrow_released) using cursor-based
  * pagination so missed events and re-org recovery are handled automatically.
+ *
+ * Cursor persistence (#209):
+ *   The last successfully processed paging token is stored in Redis under the
+ *   key INDEXER_CURSOR_KEY.  On restart the indexer resumes from that token,
+ *   guaranteeing no gaps and avoiding duplicate processing.
+ *
+ * Redis reconnection (#209):
+ *   If the Redis connection drops the indexer reconnects with exponential
+ *   back-off (base 250 ms, cap 30 s, jitter ±10 %).  It continues to poll
+ *   Soroban during the reconnect window — cursor saves are queued / retried
+ *   automatically by ioredis — so no events are lost.
  *
  * Usage (standalone):
  *   SOROBAN_RPC_URL=... INVOICE_CONTRACT_ID=... node dist/indexer.js
@@ -12,6 +23,7 @@
  */
 
 import { SorobanRpc, xdr } from "stellar-sdk"
+import Redis from "ioredis"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,15 +56,127 @@ const TRACKED_EVENTS = new Set<string>([
 ])
 
 // ---------------------------------------------------------------------------
-// Cursor persistence (in-memory with optional env override for restarts)
+// Redis cursor persistence (#209)
 // ---------------------------------------------------------------------------
 
-let cursor: string = process.env.INDEXER_START_CURSOR ?? "0"
+const INDEXER_CURSOR_KEY = "invoice_indexer_cursor"
 
-function saveCursor(next: string): void {
-  cursor = next
-  // In production swap this for a DB or Redis write so restarts resume cleanly.
-  // e.g.: await redis.set("invoice_indexer_cursor", next)
+/**
+ * In-memory fallback cursor — used when Redis is unavailable at startup
+ * or when a cursor write fails.  Soroban polling continues uninterrupted.
+ */
+let memCursor: string = process.env.INDEXER_START_CURSOR ?? "0"
+
+/** The active ioredis client.  Replaced on each reconnect attempt. */
+let redisClient: Redis | null = null
+
+// ---------------------------------------------------------------------------
+// Exponential back-off helper (#209)
+// ---------------------------------------------------------------------------
+
+const BACKOFF_BASE_MS = 250
+const BACKOFF_CAP_MS = 30_000
+const BACKOFF_JITTER = 0.1 // ±10 %
+
+/**
+ * Returns the delay in milliseconds for the n-th retry attempt
+ * (0-indexed) using capped exponential back-off with jitter.
+ */
+export function backoffDelayMs(attempt: number): number {
+  const exp = Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_CAP_MS)
+  const jitter = exp * BACKOFF_JITTER * (Math.random() * 2 - 1)
+  return Math.round(exp + jitter)
+}
+
+// ---------------------------------------------------------------------------
+// Redis connection with reconnect/back-off loop (#209)
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates an ioredis client configured with automatic reconnect back-off.
+ * ioredis natively retries connections; we customise the strategy so each
+ * attempt follows our capped exponential schedule.
+ *
+ * The returned client emits 'connect', 'reconnecting', and 'error' events
+ * which are logged for observability.
+ */
+export function createRedisClient(redisUrl?: string): Redis {
+  const url = redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379"
+
+  let attempt = 0
+  const client = new Redis(url, {
+    // ioredis calls this after each failed connection attempt.
+    // Return the number of milliseconds to wait before the next attempt,
+    // or false / null to stop retrying entirely.
+    retryStrategy(times: number): number | null {
+      attempt = times
+      if (times > 50) {
+        // After 50 retries (~30 min with cap) give up so operators notice.
+        console.error(
+          `[indexer] Redis retry limit reached after ${times} attempts — stopping reconnect`
+        )
+        return null
+      }
+      const delay = backoffDelayMs(times - 1)
+      console.warn(
+        `[indexer] Redis reconnect attempt ${times} — waiting ${delay} ms`
+      )
+      return delay
+    },
+    // Do not flood logs when commands queue during a disconnect.
+    enableReadyCheck: false,
+    maxRetriesPerRequest: null,
+    lazyConnect: false,
+  })
+
+  client.on("connect", () => {
+    console.log("[indexer] Redis connected")
+    attempt = 0
+  })
+
+  client.on("reconnecting", (ms: number) => {
+    console.warn(`[indexer] Redis reconnecting in ${ms} ms (attempt ${attempt})`)
+  })
+
+  client.on("error", (err: Error) => {
+    // Log but do not crash — the indexer continues polling Soroban.
+    console.error(`[indexer] Redis error: ${err.message}`)
+  })
+
+  return client
+}
+
+// ---------------------------------------------------------------------------
+// Cursor read / write (with Redis fallback to in-memory)
+// ---------------------------------------------------------------------------
+
+/** Reads the last cursor from Redis, falling back to the in-memory value. */
+export async function loadCursor(): Promise<string> {
+  if (redisClient) {
+    try {
+      const stored = await redisClient.get(INDEXER_CURSOR_KEY)
+      if (stored) {
+        memCursor = stored
+        return stored
+      }
+    } catch (err) {
+      console.warn("[indexer] could not read cursor from Redis — using in-memory cursor", err)
+    }
+  }
+  return memCursor
+}
+
+/** Persists the cursor to Redis and in-memory for durability. */
+export async function saveCursor(next: string): Promise<void> {
+  memCursor = next
+  if (redisClient) {
+    try {
+      await redisClient.set(INDEXER_CURSOR_KEY, next)
+    } catch (err) {
+      // Non-fatal: in-memory cursor is still updated, so polling continues.
+      console.warn("[indexer] could not save cursor to Redis — using in-memory fallback", err)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -60,24 +184,14 @@ function saveCursor(next: string): void {
 // ---------------------------------------------------------------------------
 
 function parseEventType(topics: xdr.ScVal[]): InvoiceEventType | null {
-  // Soroban contract events encode the event name as the first topic symbol.
   const name = topics[0]?.sym()?.toString()
   if (!name || !TRACKED_EVENTS.has(name)) return null
   return name as InvoiceEventType
 }
 
 function parseInvoiceId(topics: xdr.ScVal[]): string {
-  // Convention: second topic is the invoice_id (u32 or u64).
   const id = topics[1]?.u32() ?? topics[1]?.u64()
   return id?.toString() ?? "unknown"
-}
-
-function scValToString(val: xdr.ScVal): string {
-  try {
-    return val.toXDR("base64")
-  } catch {
-    return ""
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +217,8 @@ export async function pollOnce(
   server: SorobanRpc.Server,
   contractId: string
 ): Promise<void> {
+  const cursor = await loadCursor()
+
   const response = await (server as any).getEvents({
     startLedger: cursor === "0" ? undefined : undefined,
     cursor: cursor === "0" ? undefined : cursor,
@@ -141,20 +257,19 @@ export async function pollOnce(
 
   // Advance cursor to the last seen event's paging token for re-org safety.
   if (events.length > 0) {
-    saveCursor(events[events.length - 1].pagingToken)
+    await saveCursor(events[events.length - 1].pagingToken)
   }
 }
 
 // ---------------------------------------------------------------------------
-// Start function — exported for embedding; also runs as CLI entry point
+// Start / stop
 // ---------------------------------------------------------------------------
 
-/** Handle to the running poll loop, used by stop() to prevent new polls. */
 let stopped = false
 let activeTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
- * Stops the indexer poll loop. Safe to call multiple times.
+ * Stops the indexer poll loop.  Safe to call multiple times.
  * Does not interrupt an in-flight pollOnce() call; it prevents scheduling
  * the next one so any active poll completes cleanly before the process exits.
  */
@@ -164,13 +279,21 @@ export function stopIndexer(): void {
     clearTimeout(activeTimer)
     activeTimer = null
   }
+  // Gracefully close the Redis connection on shutdown.
+  if (redisClient) {
+    redisClient.quit().catch(() => {/* ignore quit errors during shutdown */})
+    redisClient = null
+  }
 }
 
 export async function startIndexer(options?: {
   rpcUrl?: string
   contractId?: string
   pollIntervalMs?: number
+  redisUrl?: string
   onError?: (err: unknown) => void
+  /** Injected Redis client for tests — skips real Redis connection. */
+  _redisClient?: Redis | null
 }): Promise<void> {
   const rpcUrl = options?.rpcUrl ?? process.env.SOROBAN_RPC_URL
   const contractId = options?.contractId ?? process.env.INVOICE_CONTRACT_ID
@@ -180,14 +303,25 @@ export async function startIndexer(options?: {
     throw new Error("startIndexer: SOROBAN_RPC_URL and INVOICE_CONTRACT_ID are required")
   }
 
+  // #209 — create (or inject) a Redis client with reconnect back-off.
+  if (options?._redisClient !== undefined) {
+    // Allow tests to inject a mock/null client.
+    redisClient = options._redisClient
+  } else {
+    redisClient = createRedisClient(options?.redisUrl)
+  }
+
   const server = new SorobanRpc.Server(rpcUrl)
 
-  console.log(`[indexer] starting — contract=${contractId} cursor=${cursor} interval=${pollIntervalMs}ms`)
+  const initialCursor = await loadCursor()
+  console.log(
+    `[indexer] starting — contract=${contractId} cursor=${initialCursor} interval=${pollIntervalMs}ms`
+  )
 
   const loop = async () => {
     if (stopped) return
     try {
-      await pollOnce(server, contractId)
+      await pollOnce(server, contractId!)
     } catch (err) {
       const handler = options?.onError ?? ((e) => console.error("[indexer] poll error", e))
       handler(err)
