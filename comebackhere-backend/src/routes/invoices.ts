@@ -1,12 +1,7 @@
 import { Router, type Request, type Response } from "express"
 import { Keypair, Networks, TransactionBuilder, BASE_FEE, Contract, nativeToScVal, SorobanRpc, xdr } from "stellar-sdk"
-import {
-  connectMongo,
-  getInvoicesCollection,
-  DEFAULT_PAGE_SIZE,
-  MAX_PAGE_SIZE,
-  type InvoiceSearchFilter,
-} from "../db/mongo.js"
+import { connectMongo, getInvoicesCollection, type InvoiceRecord, type InvoiceStatus } from "../db/mongo.js"
+import { cacheGet, cacheSet } from "../lib/cache.js"
 
 const router = Router()
 
@@ -15,31 +10,6 @@ export interface CreateInvoiceBody {
   token: string
   amount: number
   due_date: number // Unix timestamp (seconds)
-}
-
-function isValidStellarAddress(addr: string): boolean {
-  try {
-    Keypair.fromPublicKey(addr)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function validateBody(body: Partial<CreateInvoiceBody>): string | null {
-  if (!body.merchant_address) return "merchant_address is required"
-  if (!isValidStellarAddress(body.merchant_address))
-    return "merchant_address must be a valid Stellar public key"
-  if (!body.token) return "token is required"
-  if (body.amount === undefined || body.amount === null) return "amount is required"
-  if (typeof body.amount !== "number" || body.amount <= 0)
-    return "amount must be a positive number"
-  if (body.due_date === undefined || body.due_date === null) return "due_date is required"
-  if (typeof body.due_date !== "number" || !Number.isInteger(body.due_date) || body.due_date <= 0)
-    return "due_date must be a positive Unix timestamp"
-  if (body.due_date <= Math.floor(Date.now() / 1000))
-    return "due_date must be in the future"
-  return null
 }
 
 // Soroban interaction extracted so it can be replaced in tests
@@ -131,59 +101,100 @@ export async function createInvoice(
 }
 
 /**
- * GET /invoices
- * Returns a paginated list of invoices from the database.
- *
- * Query params:
- *   limit   – number of records to return (default: 20, max: 100)
- *   offset  – number of records to skip   (default: 0)
- *   status  – filter by invoice status (optional)
- *   merchant_address – filter by merchant (optional)
- *
- * Response shape (backward-compatible):
- *   { data: Invoice[], total: number, limit: number, offset: number }
+ * @openapi
+ * /invoices:
+ *   get:
+ *     tags: [Invoices]
+ *     summary: List invoices with pagination and filtering
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [Pending, Paid, Expired, Cancelled, RefundRequested, Released]
+ *       - in: query
+ *         name: merchant
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Paginated invoice list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Invoice'
+ *                 total:
+ *                   type: integer
+ *                 page:
+ *                   type: integer
+ *                 limit:
+ *                   type: integer
+ *                 totalPages:
+ *                   type: integer
  */
 router.get("/", async (req: Request, res: Response) => {
-  // Parse and validate limit
-  const rawLimit = req.query.limit !== undefined ? Number(req.query.limit) : DEFAULT_PAGE_SIZE
-  if (!Number.isInteger(rawLimit) || rawLimit <= 0) {
-    res.status(400).json({ error: "limit must be a positive integer" })
-    return
-  }
-  const limit = Math.min(rawLimit, MAX_PAGE_SIZE)
+  const page = Math.max(1, parseInt(req.query.page as string, 10) || 1)
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20))
+  const statusFilter = req.query.status as string | undefined
+  const merchantFilter = req.query.merchant as string | undefined
 
-  // Parse and validate offset
-  const rawOffset = req.query.offset !== undefined ? Number(req.query.offset) : 0
-  if (!Number.isInteger(rawOffset) || rawOffset < 0) {
-    res.status(400).json({ error: "offset must be a non-negative integer" })
-    return
-  }
-  const offset = rawOffset
+  const allowedStatuses: InvoiceStatus[] = ["Pending", "Paid", "Expired", "Cancelled", "RefundRequested", "Released"]
+  const status = statusFilter && allowedStatuses.includes(statusFilter as InvoiceStatus)
+    ? (statusFilter as InvoiceStatus)
+    : undefined
 
-  // Build optional filter
-  const filter: InvoiceSearchFilter = {}
-  if (req.query.status) {
-    filter.status = req.query.status as InvoiceSearchFilter["status"]
-  }
-  if (req.query.merchant_address) {
-    filter.merchant_address = req.query.merchant_address as string
+  const cacheKey = `invoices:${page}:${limit}:${status ?? "all"}:${merchantFilter ?? "all"}`
+
+  const cached = await cacheGet<{ data: InvoiceRecord[]; total: number; page: number; limit: number; totalPages: number }>(cacheKey)
+  if (cached) {
+    res.json(cached)
+    return
   }
 
   try {
-    const database = await connectMongo()
-    const invoices = getInvoicesCollection(database)
+    const db = await connectMongo()
+    const collection = getInvoicesCollection(db)
 
-    const [data, total] = await Promise.all([
-      invoices
-        .find(filter)
-        .sort({ created_at: -1 })
-        .skip(offset)
-        .limit(limit)
-        .toArray(),
-      invoices.countDocuments(filter),
-    ])
+    const filter: Record<string, unknown> = {}
+    if (status) filter.status = status
+    if (merchantFilter) filter.merchant_address = merchantFilter
 
-    res.json({ data, total, limit, offset })
+    const total = await collection.countDocuments(filter)
+    const totalPages = Math.ceil(total / limit)
+    const skip = (page - 1) * limit
+
+    const data = await collection
+      .find(filter)
+      .sort({ created_at: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray()
+
+    const result = {
+      data,
+      total,
+      page,
+      limit,
+      totalPages,
+    }
+
+    await cacheSet(cacheKey, result, 30)
+    res.json(result)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
     res.status(500).json({ error: message })
@@ -191,17 +202,52 @@ router.get("/", async (req: Request, res: Response) => {
 })
 
 /**
- * GET /invoices/:id
- * Fetches the on-chain status of an existing invoice by its ID.
- * Returns: { invoice_id, status }
+ * @openapi
+ * /invoices/{id}:
+ *   get:
+ *     tags: [Invoices]
+ *     summary: Fetch invoice status by ID
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Positive integer string invoice ID
+ *     responses:
+ *       200:
+ *         description: Invoice found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 invoice_id:
+ *                   type: string
+ *                   example: "42"
+ *                 status:
+ *                   $ref: '#/components/schemas/InvoiceStatus'
+ *       400:
+ *         description: Invalid invoice ID
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: Invoice not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       503:
+ *         description: Service misconfiguration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get("/:id", async (req: Request, res: Response) => {
+router.get("/:id", validateParams(invoiceIdParamSchema), async (req: Request, res: Response) => {
   const { id } = req.params
-
-  if (!id || !/^\d+$/.test(id)) {
-    res.status(400).json({ error: "id must be a positive integer" })
-    return
-  }
 
   const rpcUrl = process.env.SOROBAN_RPC_URL
   const contractId = process.env.INVOICE_CONTRACT_ID
@@ -245,18 +291,73 @@ router.get("/:id", async (req: Request, res: Response) => {
 })
 
 /**
- * POST /invoices
- * Creates a new invoice by submitting create_invoice to Soroban RPC.
- * Body: { merchant_address, token, amount, due_date }
- * Returns: { invoice_id, status }
+ * @openapi
+ * /invoices:
+ *   post:
+ *     tags: [Invoices]
+ *     summary: Create a new invoice
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [merchant_address, token, amount, due_date]
+ *             properties:
+ *               merchant_address:
+ *                 type: string
+ *                 description: Valid Stellar public key (G…)
+ *                 example: "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+ *               token:
+ *                 type: string
+ *                 example: "USDC"
+ *               amount:
+ *                 type: integer
+ *                 description: Positive number in stroops / smallest unit
+ *                 example: 1000000
+ *               due_date:
+ *                 type: integer
+ *                 description: Future Unix timestamp (seconds)
+ *                 example: 1720000000
+ *     responses:
+ *       201:
+ *         description: Invoice created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 invoice_id:
+ *                   type: string
+ *                   example: "1"
+ *                 status:
+ *                   $ref: '#/components/schemas/InvoiceStatus'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       422:
+ *         description: Soroban simulation or transaction failure
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       503:
+ *         description: Service misconfiguration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       504:
+ *         description: Transaction confirmation timeout
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/", async (req: Request, res: Response) => {
-  const validationError = validateBody(req.body as Partial<CreateInvoiceBody>)
-  if (validationError) {
-    res.status(400).json({ error: validationError })
-    return
-  }
-
+router.post("/", validateBody(createInvoiceSchema), async (req: Request, res: Response) => {
   const rpcUrl = process.env.SOROBAN_RPC_URL
   const contractId = process.env.INVOICE_CONTRACT_ID
   const signerSecret = process.env.SIGNER_SECRET_KEY
@@ -276,6 +377,22 @@ router.post("/", async (req: Request, res: Response) => {
       signerSecret,
       networkPassphrase
     )
+
+    const db = await connectMongo()
+    const collection = getInvoicesCollection(db)
+    const body = req.body as CreateInvoiceBody
+    const now = new Date()
+    await collection.insertOne({
+      invoice_id: result.invoice_id,
+      merchant_address: body.merchant_address,
+      token: body.token,
+      amount: body.amount,
+      due_date: body.due_date,
+      status: "Pending",
+      created_at: now,
+      updated_at: now,
+    })
+
     res.status(201).json(result)
   } catch (err: unknown) {
     const status = (err as any)?.status ?? 500
