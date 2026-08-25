@@ -18,6 +18,37 @@ import {
 
 const router = Router()
 
+// ---------------------------------------------------------------------------
+// #212 — In-memory balance cache with TTL
+// ---------------------------------------------------------------------------
+
+const BALANCE_CACHE_TTL_MS = 5_000 // 5 second TTL
+
+interface BalanceCacheEntry {
+  data: Array<{ token: string; balance: string }>
+  expiresAt: number
+}
+
+let _balanceCache: BalanceCacheEntry | null = null
+
+/** Returns cached balances if still fresh, otherwise null. */
+export function getBalanceCache(): Array<{ token: string; balance: string }> | null {
+  if (_balanceCache && Date.now() < _balanceCache.expiresAt) {
+    return _balanceCache.data
+  }
+  return null
+}
+
+/** Stores balance data in the cache with a fresh TTL. */
+export function setBalanceCache(data: Array<{ token: string; balance: string }>): void {
+  _balanceCache = { data, expiresAt: Date.now() + BALANCE_CACHE_TTL_MS }
+}
+
+/** Immediately invalidates the balance cache (call after execute-settlement / withdrawal). */
+export function invalidateBalanceCache(): void {
+  _balanceCache = null
+}
+
 function requireEnv(res: Response): {
   rpcUrl: string
   treasuryContractId: string
@@ -348,6 +379,8 @@ router.post("/execute-settlement", validateBody(executeSettlementSchema), async 
       { settlement_id: settlementId, token_contract },
       env,
     )
+    // #212 — balance changed; evict the cache so the next GET /balances is fresh
+    invalidateBalanceCache()
     res.json(result)
   } catch (err: unknown) {
     const status = (err as { status?: number })?.status ?? 500
@@ -575,10 +608,18 @@ router.post("/escalate-hold", validateBody(escalateHoldSchema), async (req: Requ
 /**
  * GET /api/treasury/balances
  * Returns token balances held by the treasury contract.
+ * Results are cached for up to 5 seconds to reduce Soroban RPC load (#212).
  */
 router.get("/balances", async (_req: Request, res: Response) => {
   const env = requireEnv(res)
   if (!env) return
+
+  // #212 — serve from cache when available
+  const cached = getBalanceCache()
+  if (cached) {
+    res.json(cached)
+    return
+  }
 
   try {
     const client = buildSorobanClient(env.rpcUrl)
@@ -593,7 +634,9 @@ router.get("/balances", async (_req: Request, res: Response) => {
       env.networkPassphrase,
     )
 
-    res.json([{ token: env.usdcContractId, balance: balance.toString() }])
+    const data = [{ token: env.usdcContractId, balance: balance.toString() }]
+    setBalanceCache(data)
+    res.json(data)
   } catch (err: unknown) {
     const status = (err as { status?: number })?.status ?? 500
     const message = err instanceof Error ? err.message : String(err)
