@@ -9,6 +9,7 @@ import {
   getSettlementsCollection,
   type SettlementRecord,
 } from "../db/mongo.js"
+import { dispatchWebhook } from "./webhooks.js"
 
 const CURSOR_ID = "treasury_settlement_events"
 const POLL_INTERVAL_MS = 5_000
@@ -236,12 +237,62 @@ export async function processIndexerBatch(
       const amount = valueU64(event.value, 2)
       const merchant = valueAddress(event.value, 3)
       await processSettlementProposed(settlements, settlementId, token, amount, merchant, txHash)
+
+      // Dispatch signed webhook for settlement_proposed
+      const webhookUrl = process.env.WEBHOOK_URL
+      if (webhookUrl) {
+        dispatchWebhook(webhookUrl, {
+          event: "settlement_proposed",
+          settlement_id: settlementId,
+          merchant_address: merchant,
+          amount: amount.toString(),
+          token,
+          tx_hash: txHash,
+        }).catch((err: unknown) => {
+          console.error(
+            "[treasury-indexer] webhook dispatch failed (settlement_proposed):",
+            err instanceof Error ? err.message : err,
+          )
+        })
+      }
     } else if (eventType === "settlement_approved") {
       const signer = valueAddress(event.value, 1)
       const newWeight = valueU64(event.value, 3)
       await processSettlementApproved(settlements, settlementId, signer, newWeight)
+
+      // Dispatch signed webhook for settlement_approved
+      const webhookUrl = process.env.WEBHOOK_URL
+      if (webhookUrl) {
+        dispatchWebhook(webhookUrl, {
+          event: "settlement_approved",
+          settlement_id: settlementId,
+          signer,
+          approval_weight: newWeight.toString(),
+          tx_hash: txHash,
+        }).catch((err: unknown) => {
+          console.error(
+            "[treasury-indexer] webhook dispatch failed (settlement_approved):",
+            err instanceof Error ? err.message : err,
+          )
+        })
+      }
     } else if (eventType === "settlement_executed") {
       await processSettlementExecuted(settlements, settlementId, txHash)
+
+      // Dispatch signed webhook for settlement_executed
+      const webhookUrl = process.env.WEBHOOK_URL
+      if (webhookUrl) {
+        dispatchWebhook(webhookUrl, {
+          event: "settlement_executed",
+          settlement_id: settlementId,
+          tx_hash: txHash,
+        }).catch((err: unknown) => {
+          console.error(
+            "[treasury-indexer] webhook dispatch failed (settlement_executed):",
+            err instanceof Error ? err.message : err,
+          )
+        })
+      }
     }
 
     processedIds.add(eventId)

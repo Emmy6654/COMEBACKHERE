@@ -36,6 +36,36 @@ export interface IndexerCursor {
   processed_event_ids?: string[]
 }
 
+export type InvoiceStatus =
+  | "Pending"
+  | "Paid"
+  | "Expired"
+  | "Cancelled"
+  | "RefundRequested"
+  | "Released"
+
+export interface InvoiceRecord {
+  invoice_id: string
+  merchant_address: string
+  payer_address: string | null
+  token: string
+  amount: string
+  status: InvoiceStatus
+  created_at: number | null   // Unix timestamp (seconds)
+  expires_at: number | null   // Unix timestamp (seconds)
+  paid_at: number | null      // Unix timestamp (seconds)
+  tx_hash: string | null
+  updated_at: Date
+}
+
+export interface InvoiceSearchFilter {
+  status?: InvoiceStatus
+  merchant_address?: string
+}
+
+export const DEFAULT_PAGE_SIZE = 20
+export const MAX_PAGE_SIZE = 100
+
 let client: MongoClient | null = null
 let db: Db | null = null
 
@@ -62,6 +92,12 @@ export async function connectMongo(): Promise<Db> {
   const cursors = db.collection<IndexerCursor>("indexer_cursors")
   await cursors.createIndex({ _id: 1 }, { unique: true })
 
+  const invoices = db.collection<InvoiceRecord>("invoices")
+  await invoices.createIndex({ invoice_id: 1 }, { unique: true })
+  await invoices.createIndex({ status: 1 })
+  await invoices.createIndex({ merchant_address: 1 })
+  await invoices.createIndex({ created_at: -1 })
+
   return db
 }
 
@@ -75,6 +111,10 @@ export function getSettlementsCollection(database: Db): Collection<SettlementRec
 
 export function getCursorsCollection(database: Db): Collection<IndexerCursor> {
   return database.collection<IndexerCursor>("indexer_cursors")
+}
+
+export function getInvoicesCollection(database: Db): Collection<InvoiceRecord> {
+  return database.collection<InvoiceRecord>("invoices")
 }
 
 export async function closeMongo(): Promise<void> {

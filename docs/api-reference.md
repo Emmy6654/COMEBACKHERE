@@ -517,6 +517,75 @@ Update the invoice grace window.
 
 ---
 
+## Webhooks
+
+COMEBACKHERE signs every outbound webhook POST with HMAC-SHA256 so your endpoint
+can verify payload authenticity before processing it.
+
+> **Security note**: this is a security-sensitive feature. Treat your signing
+> secret with the same care as a private key. Rotate it immediately if it is ever
+> exposed.
+
+### Signature header
+
+| Header                      | Value                                    |
+| --------------------------- | ---------------------------------------- |
+| `X-COMEBACKHERE-Signature`  | Lowercase hex-encoded HMAC-SHA256 digest |
+
+The digest is computed over the **raw JSON request body** (exactly as sent over
+the wire) using the `WEBHOOK_SIGNING_SECRET` environment variable as the key.
+
+### Verification (Node.js example)
+
+```typescript
+import { createHmac, timingSafeEqual } from "crypto"
+
+function verifyWebhook(
+  rawBody: string,     // The unparsed request body string
+  signature: string,   // Value of X-COMEBACKHERE-Signature header
+  secret: string,      // Your WEBHOOK_SIGNING_SECRET
+): boolean {
+  const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")
+  const expectedBuf = Buffer.from(expected, "hex")
+  const actualBuf   = Buffer.from(signature, "hex")
+  if (expectedBuf.length !== actualBuf.length) return false
+  return timingSafeEqual(expectedBuf, actualBuf)
+}
+```
+
+Always use a **constant-time comparison** (e.g. `crypto.timingSafeEqual`) when
+comparing signatures to prevent timing side-channel attacks.
+
+### Webhook event payload shape
+
+All events share a common `event` field plus event-specific fields:
+
+```json
+{
+  "event": "settlement_executed",
+  "settlement_id": 1,
+  "tx_hash": "abc123..."
+}
+```
+
+| Event                   | Extra fields                                               |
+| ----------------------- | ---------------------------------------------------------- |
+| `settlement_proposed`   | `settlement_id`, `merchant_address`, `amount`, `token`, `tx_hash` |
+| `settlement_approved`   | `settlement_id`, `signer`, `approval_weight`, `tx_hash`    |
+| `settlement_executed`   | `settlement_id`, `tx_hash`                                 |
+
+### Configuration
+
+| Variable                | Description                                                        |
+| ----------------------- | ------------------------------------------------------------------ |
+| `WEBHOOK_URL`           | Merchant endpoint that receives webhook POSTs                      |
+| `WEBHOOK_SIGNING_SECRET`| HMAC-SHA256 signing secret (minimum 32 characters recommended)     |
+
+Set both variables in your deployment environment. If `WEBHOOK_URL` is not set,
+webhook delivery is skipped silently (no error).
+
+---
+
 ## Error response shape
 
 All error responses share this shape:
@@ -536,4 +605,6 @@ All error responses share this shape:
 | `SETTLEMENT_CONTRACT_ID` | Settlement contract address (disputes)                  |
 | `SIGNER_SECRET_KEY`    | Stellar secret key for signing transactions               |
 | `NETWORK_PASSPHRASE`   | Stellar network passphrase                                |
+| `WEBHOOK_URL`          | Merchant webhook endpoint URL                             |
+| `WEBHOOK_SIGNING_SECRET` | HMAC-SHA256 signing secret for outbound webhooks        |
 | `PORT`                 | HTTP server port (default `3000`)                         |

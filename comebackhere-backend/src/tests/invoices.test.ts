@@ -3,6 +3,7 @@ import request from "supertest"
 import { createApp } from "../app.js"
 import { createInvoice, type SorobanClient } from "../routes/invoices.js"
 import { SorobanRpc, SorobanDataBuilder, xdr } from "stellar-sdk"
+import * as mongoModule from "../db/mongo.js"
 
 // Pre-parsed success simulation result accepted by assembleTransaction without XDR parsing
 const PARSED_SIM_SUCCESS = {
@@ -201,4 +202,170 @@ describe("createInvoice — Soroban interaction", () => {
     await expect(createInvoice(VALID_BODY, client, CONTRACT_ID, SIGNER_SECRET, NETWORK))
       .rejects.toMatchObject({ message: expect.stringMatching(/timeout/), status: 504 })
   }, 15_000)
+})
+
+// ── #207: GET /invoices pagination ────────────────────────────────────────────
+
+describe("GET /invoices — pagination", () => {
+  const app = createApp()
+  let envBackup: Record<string, string | undefined>
+
+  const makeInvoice = (n: number) => ({
+    invoice_id: `inv-${n}`,
+    merchant_address: MERCHANT_ADDRESS,
+    payer_address: null,
+    token: "USDC",
+    amount: "1000000",
+    status: "Pending",
+    created_at: 1_700_000_000 - n * 1000,
+    expires_at: 1_700_100_000,
+    paid_at: null,
+    tx_hash: null,
+    updated_at: new Date(),
+  })
+
+  const ALL_INVOICES = Array.from({ length: 35 }, (_, i) => makeInvoice(i + 1))
+
+  function mockCollection(invoices: typeof ALL_INVOICES, total: number) {
+    const cursor = {
+      sort: vi.fn().mockReturnThis(),
+      skip: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      toArray: vi.fn().mockResolvedValue(invoices),
+    }
+    return {
+      find: vi.fn().mockReturnValue(cursor),
+      countDocuments: vi.fn().mockResolvedValue(total),
+      _cursor: cursor,
+    }
+  }
+
+  beforeEach(() => {
+    envBackup = {}
+    for (const key of Object.keys(ENV)) {
+      envBackup[key] = process.env[key]
+      process.env[key] = ENV[key as keyof typeof ENV]
+    }
+  })
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(envBackup)) {
+      if (val === undefined) delete process.env[key]
+      else process.env[key] = val
+    }
+    vi.restoreAllMocks()
+  })
+
+  it("returns default page size (20) when no params given", async () => {
+    const page = ALL_INVOICES.slice(0, 20)
+    const col = mockCollection(page, 35)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    const res = await request(app).get("/invoices")
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ total: 35, limit: 20, offset: 0 })
+    expect(res.body.data).toHaveLength(20)
+    expect(col._cursor.skip).toHaveBeenCalledWith(0)
+    expect(col._cursor.limit).toHaveBeenCalledWith(20)
+  })
+
+  it("respects limit param", async () => {
+    const page = ALL_INVOICES.slice(0, 5)
+    const col = mockCollection(page, 35)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    const res = await request(app).get("/invoices?limit=5")
+    expect(res.status).toBe(200)
+    expect(res.body.limit).toBe(5)
+    expect(res.body.data).toHaveLength(5)
+    expect(col._cursor.limit).toHaveBeenCalledWith(5)
+  })
+
+  it("respects offset param", async () => {
+    const page = ALL_INVOICES.slice(10, 30)
+    const col = mockCollection(page, 35)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    const res = await request(app).get("/invoices?limit=20&offset=10")
+    expect(res.status).toBe(200)
+    expect(res.body.offset).toBe(10)
+    expect(col._cursor.skip).toHaveBeenCalledWith(10)
+  })
+
+  it("caps limit at MAX_PAGE_SIZE (100)", async () => {
+    const col = mockCollection([], 0)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    const res = await request(app).get("/invoices?limit=9999")
+    expect(res.status).toBe(200)
+    // limit is capped at 100 internally
+    expect(col._cursor.limit).toHaveBeenCalledWith(100)
+  })
+
+  it("400 when limit is not a positive integer", async () => {
+    const res = await request(app).get("/invoices?limit=abc")
+    expect(res.status).toBe(400)
+    expect(res.body.error).toMatch(/limit/)
+  })
+
+  it("400 when limit is zero", async () => {
+    const res = await request(app).get("/invoices?limit=0")
+    expect(res.status).toBe(400)
+    expect(res.body.error).toMatch(/limit/)
+  })
+
+  it("400 when offset is negative", async () => {
+    const res = await request(app).get("/invoices?offset=-1")
+    expect(res.status).toBe(400)
+    expect(res.body.error).toMatch(/offset/)
+  })
+
+  it("returns empty data array with correct total when no invoices match", async () => {
+    const col = mockCollection([], 0)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    const res = await request(app).get("/invoices")
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ data: [], total: 0, limit: 20, offset: 0 })
+  })
+
+  it("passes status filter to database query", async () => {
+    const col = mockCollection([], 0)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    await request(app).get("/invoices?status=Paid")
+    expect(col.find).toHaveBeenCalledWith(expect.objectContaining({ status: "Paid" }))
+  })
+
+  it("passes merchant_address filter to database query", async () => {
+    const col = mockCollection([], 0)
+
+    vi.spyOn(mongoModule, "connectMongo").mockResolvedValue({} as any)
+    vi.spyOn(mongoModule, "getInvoicesCollection").mockReturnValue(col as any)
+
+    await request(app).get(`/invoices?merchant_address=${MERCHANT_ADDRESS}`)
+    expect(col.find).toHaveBeenCalledWith(
+      expect.objectContaining({ merchant_address: MERCHANT_ADDRESS }),
+    )
+  })
+
+  it("500 on database error", async () => {
+    vi.spyOn(mongoModule, "connectMongo").mockRejectedValue(new Error("db unavailable"))
+
+    const res = await request(app).get("/invoices")
+    expect(res.status).toBe(500)
+    expect(res.body.error).toMatch(/db unavailable/)
+  })
 })
