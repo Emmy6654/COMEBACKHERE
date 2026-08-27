@@ -517,6 +517,60 @@ Update the invoice grace window.
 
 ---
 
+## Compliance
+
+### `GET /compliance/audit`
+
+Returns the paginated, consolidated audit trail emitted by the compliance contract.
+The service indexes `address_allowed`, `address_allowed_until`, `address_blocked`, and
+`address_cleared` events in MongoDB.
+
+#### Query parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `address` | string | No | Stellar public key filter |
+| `event_type` | string | No | One of the four compliance event types |
+| `from_ledger` | integer | No | Inclusive lower ledger bound |
+| `to_ledger` | integer | No | Inclusive upper ledger bound |
+| `page` | integer | No | 1-based page, default `1` |
+| `limit` | integer | No | Page size, default `20`, maximum `100` |
+
+**Response `200`**
+
+```json
+{
+  "events": [
+    {
+      "event_id": "paging-token",
+      "event_type": "address_cleared",
+      "address": "G...",
+      "expires_at": null,
+      "ledger": 123,
+      "ledger_closed_at": "2026-08-27T12:00:00.000Z",
+      "transaction_hash": "abc123...",
+      "contract_id": "C...",
+      "paging_token": "paging-token",
+      "created_at": "2026-08-27T12:00:01.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 1,
+  "has_more": false
+}
+```
+
+#### Errors
+
+| Status | Description |
+| --- | --- |
+| `400` | Invalid query parameter |
+| `503` | MongoDB unavailable |
+| `500` | Unexpected server error |
+
+---
+
 ## Webhooks
 
 COMEBACKHERE signs every outbound webhook POST with HMAC-SHA256 so your endpoint

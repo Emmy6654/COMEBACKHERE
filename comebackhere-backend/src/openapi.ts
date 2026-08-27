@@ -67,6 +67,7 @@ const options: swaggerJsdoc.Options = {
       { name: "Disputes", description: "Dispute management" },
       { name: "Treasury", description: "Settlement and treasury operations" },
       { name: "Invoice Settings", description: "Grace window configuration" },
+      { name: "Compliance", description: "Compliance status and audit history" },
     ],
   },
   // Glob must resolve at spec-generation time; use absolute path

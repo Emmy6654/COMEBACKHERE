@@ -113,6 +113,17 @@ export const createDisputeSchema = z.object({
   reason: z.string().optional(),
 })
 
+export const complianceAuditQuerySchema = z.object({
+  address: stellarAddress.optional(),
+  event_type: z.enum(["address_allowed", "address_allowed_until", "address_blocked", "address_cleared"]).optional(),
+  from_ledger: z.coerce.number().int().nonnegative().optional(),
+  to_ledger: z.coerce.number().int().nonnegative().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+}).refine((query) => query.from_ledger === undefined || query.to_ledger === undefined || query.from_ledger <= query.to_ledger, {
+  message: "from_ledger must be before to_ledger",
+})
+
 export const analyticsQuerySchema = z
   .object({
     start_date: z
