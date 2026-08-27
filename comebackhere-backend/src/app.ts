@@ -8,6 +8,7 @@ import invoiceSettingsRouter from "./routes/invoice-settings.js"
 import thresholdRouter from "./routes/threshold.js"
 import disputesRouter from "./routes/disputes.js"
 import analyticsRouter from "./routes/analytics.js"
+import { startComplianceIndexer } from "./services/compliance-indexer.js"
 import { rateLimitMiddleware } from "./middleware/rateLimiter.js"
 import { correlationIdMiddleware } from "./middleware/correlationId.js"
 import { openapiSpec } from "./openapi.js"
@@ -41,5 +42,8 @@ export function createApp() {
   app.use("/api/treasury", thresholdRouter)
   app.use("/disputes", disputesRouter)
   app.use("/api/analytics", analyticsRouter)
+  // Start indexing only when the application is actually created; tests omit
+  // the required contract/RPC configuration and therefore remain side-effect free.
+  startComplianceIndexer()
   return app
 }

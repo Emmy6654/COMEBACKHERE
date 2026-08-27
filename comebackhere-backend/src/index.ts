@@ -11,6 +11,7 @@
 import { createApp } from "./app.js"
 import { startTreasuryIndexer, stopTreasuryIndexer } from "./services/treasury-indexer.js"
 import { stopIndexer } from "./indexer.js"
+import { stopComplianceIndexer } from "./services/compliance-indexer.js"
 import { closeMongo } from "./db/mongo.js"
 import type { Server } from "http"
 
@@ -55,6 +56,7 @@ async function shutdown(signal: string): Promise<void> {
     // 2. Stop indexer poll loops.
     stopTreasuryIndexer()
     stopIndexer()
+    stopComplianceIndexer()
     console.log("[shutdown] indexers stopped")
 
     // 3. Close MongoDB connection.
